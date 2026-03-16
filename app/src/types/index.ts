@@ -1,185 +1,153 @@
-// ============================================================
-// Input Data Types (mapped from Excel columns)
-// ============================================================
+// ============ INPUT TYPES ============
 
-/** Artikelliste.xlsx – Sheet "Verpackungsvolumen Atrikel" */
+/** Artikelliste.xlsx – Sheet "Verpackungsvolumen Atrikel"
+ *  Excel-Spalten: Nummer, Bezeichnung, Höhe, Breite, Länge, Gewicht in kg,
+ *                 Anmerkungen, Column8, Volumen in Liter, Sperrgut, Max Packmenge Sperrgut */
 export interface ArtikelData {
-  artikelnummer: number;
+  artikelnummer: string;
   bezeichnung: string;
-  hoehe: number;        // mm
-  breite: number;       // mm
-  laenge: number;       // mm
+  hoehe: number;       // mm
+  breite: number;      // mm
+  laenge: number;      // mm
   gewicht_kg: number;
-  volumen_l: number;
-  sperrgut: boolean;
-  max_packmenge_sperrgut: number | null;
+  volumen_l?: number;  // optional, berechenbar
 }
 
-/** Bestellungen Sauber.xlsx – Sheet "Bestellungen" */
+/** Bestellungen Sauber.xlsx – Sheet "Bestellungen"
+ *  Excel-Spalten: VK-Stufe, Datum, Kunden-Nr., Beleg-Nr., Lfd.Nr. Pos, Menge,
+ *                 Nummer, Bezeichnung, Gewicht Umsatz, Gewicht Artikel,
+ *                 Anzahl Pakete, Gewicht Pro Paket, Versandnr., Versandart */
 export interface BestellungData {
-  belegnummer: string;
-  artikelnummer: number;
+  artikelnummer: string;
   menge: number;
-  bezeichnung: string;
-  datum: string;
-  kundennummer: string;
+  belegnummer: string;
 }
 
-/** Artikelumsatz.xlsx – Sheet "Artikelumsatz" (aggregated total) */
+/** Artikelumsatz.xlsx – Sheet "Artikelumsatz"
+ *  Excel-Spalten: Nummer, Artikel, Artikelmenge
+ *  HINWEIS: Die reale Datei enthält nur eine aggregierte Gesamtmenge,
+ *  keine 14 Monatsspalten. umsatz[] wird ggf. mit einem Wert befüllt. */
 export interface UmsatzData {
-  artikelnummer: number;
-  bezeichnung: string;
-  artikelmenge: number; // total quantity sold
+  artikelnummer: string;
+  umsatz: number[];  // 14 Monatswerte [M01...M14] oder [Gesamt] falls nur 1 Spalte
 }
 
-/** Bestandsliste 13.03.2026.xls – Sheet "2026-03-13" */
+/** Bestandsliste 13.03.2026.xls – Sheet "2026-03-13"
+ *  Excel-Spalten: nummer, gesamt_x
+ *  HINWEIS: Kein "In_Abwicklung"-Feld in der realen Datei. */
 export interface BestandData {
-  artikelnummer: number;
+  artikelnummer: string;
   bestand: number;
+  in_abwicklung?: number;
 }
 
-// ============================================================
-// ABC-Analyse
-// ============================================================
+// ============ PROCESSED TYPES ============
 
-export type ABCKategorie = 'A' | 'B' | 'C';
-
-export interface ABCResult {
-  artikelnummer: number;
-  bezeichnung: string;
-  umsatzmenge: number;
-  anteil_prozent: number;
-  kumuliert_prozent: number;
-  kategorie: ABCKategorie;
+export interface ArtikelProcessed extends ArtikelData {
+  grundflaeche_mm2: number;       // breite × laenge
+  max_stapelhoehe: number;        // floor(320 / hoehe)
+  umsatz_gesamt: number;          // Summe 14 Monate
+  abc_klasse: 'A' | 'B' | 'C';
+  bestand: number;
+  in_abwicklung: number;
+  platzbedarf_mm2: number;        // bestand × grundflaeche
+  cluster_id?: number;
+  warnungen: string[];
 }
 
-// ============================================================
-// Co-Occurrence / Affinitätsanalyse
-// ============================================================
-
-export interface CoOccurrencePair {
-  artikel_a: number;
-  artikel_b: number;
-  gemeinsame_bestellungen: number;
-  jaccard_index: number;
-}
-
-export interface AffinitaetsCluster {
-  cluster_id: number;
-  artikel: number[];
-  label?: string;
-}
-
-// ============================================================
-// Warenträger (WT) Konfiguration
-// ============================================================
+// ============ CONFIG TYPES ============
 
 export interface WTConfig {
-  name: string;
-  hoehe_mm: number;
-  breite_mm: number;
-  tiefe_mm: number;
-  max_gewicht_kg: number;
-  anzahl_faecher: number;
-  fach_hoehe_mm: number;
+  anzahl_klein: number;           // default: 4145
+  anzahl_gross: number;           // default: 1111
+  gewicht_hard_kg: number;        // default: 24
+  gewicht_soft_kg: number;        // default: 20
+  hoehe_limit_mm: number;         // default: 320
+  teiler_breite_mm: number;       // default: 5
+  teiler_verlust_prozent: number; // default: 2 (alternative zu exakter Berechnung)
+  teiler_modus: 'exact' | 'percent'; // Berechnungsmodus
+  co_occurrence_schwellwert: number; // default: 3
 }
 
-export const DEFAULT_WT_CONFIGS: WTConfig[] = [
-  {
-    name: 'Standard-WT',
-    hoehe_mm: 640,
-    breite_mm: 440,
-    tiefe_mm: 600,
-    max_gewicht_kg: 30,
-    anzahl_faecher: 1,
-    fach_hoehe_mm: 640,
-  },
-];
+// ============ WT + OUTPUT TYPES ============
 
-// ============================================================
-// Bin-Packing / Belegungsplan
-// ============================================================
+export type WTTyp = 'KLEIN' | 'GROSS';
 
-export interface WTFach {
-  fach_index: number;
-  artikel: PlatzierterArtikel[];
-  restvolumen_l: number;
-  restgewicht_kg: number;
-}
-
-export interface PlatzierterArtikel {
-  artikelnummer: number;
+export interface WTPosition {
+  artikelnummer: string;
   bezeichnung: string;
-  menge: number;
-  volumen_l: number;
+  stueckzahl: number;
+  grundflaeche_mm2: number;
   gewicht_kg: number;
-  abc_kategorie: ABCKategorie;
+  abc_klasse: 'A' | 'B' | 'C';
 }
 
 export interface WT {
-  wt_id: number;
-  config: WTConfig;
-  faecher: WTFach[];
-  auslastung_prozent: number;
-  gewicht_gesamt_kg: number;
+  id: string;                     // z.B. "K-0001", "G-0001"
+  typ: WTTyp;
+  positionen: WTPosition[];
+  cluster_id: number;
+  gesamtgewicht_kg: number;
+  flaeche_brutto_mm2: number;     // 250000 (K) oder 400000 (G)
+  flaeche_netto_mm2: number;      // nach Teilerabzug
+  flaeche_netto_pct: number;      // Auslastung %
+  anzahl_teiler: number;
+  gewicht_status: 'ok' | 'soft_warn' | 'hard_fail';
 }
+
+// ============ OUTPUT 1: BELEGUNGSPLAN ============
 
 export interface BelegungsplanRow {
-  wt_id: number;
-  wt_name: string;
-  fach_index: number;
-  artikelnummer: number;
+  warentraeger_id: string;
+  warentraeger_typ: WTTyp;
+  artikelnummer: string;
   bezeichnung: string;
-  menge: number;
-  abc_kategorie: ABCKategorie;
-  volumen_l: number;
-  gewicht_kg: number;
-  auslastung_prozent: number;
+  stueckzahl: number;
+  cluster_id: number;
+  abc_klasse: 'A' | 'B' | 'C';
+  gesamtgewicht_kg: number;
+  flaeche_netto_pct: number;
+  anzahl_teiler: number;
 }
 
-// ============================================================
-// WT-Verhältnis-Analyse / Szenario
-// ============================================================
-
-export interface WTVerteilung {
-  config_name: string;
-  anzahl: number;
-}
+// ============ OUTPUT 2: SZENARIO-ERGEBNIS ============
 
 export interface SzenarioResult {
-  szenario_id: number;
-  label: string;
-  verteilung: WTVerteilung[];
-  gesamt_wt: number;
-  durchschn_auslastung: number;
-  unplatzierte_artikel: number;
-  score: number;
+  szenario: string;
+  anzahl_klein: number;
+  anzahl_gross: number;
+  stellplaetze_k_aequiv: number;  // K + G×1.5
+  auslastung_flaeche_avg: number; // %
+  auslastung_gewicht_avg: number; // %
+  wts_ungenutzt: number;
+  wts_ueberlast: number;          // 20-24 kg
+  co_occurrence_score: number;
+  empfehlung: string;
 }
 
-// ============================================================
-// App State
-// ============================================================
+// ============ VALIDIERUNGSERGEBNIS ============
 
-export type AppStep =
-  | 'upload'
-  | 'abc-analyse'
-  | 'co-occurrence'
-  | 'belegungsplan'
-  | 'wt-verhaeltnis'
-  | 'export';
+export interface ValidationResult {
+  hard_fails: string[];
+  warnungen: string[];
+  artikel_nicht_lagerfaehig: string[];    // Höhe > 320mm
+  artikel_unvollstaendig: string[];       // Fehlende Maße/Gewicht
+  artikel_ohne_match: string[];           // Bestellarchiv ohne Artikelliste-Match
+}
 
-export interface AppState {
-  step: AppStep;
-  artikelListe: ArtikelData[];
-  bestellungen: BestellungData[];
-  umsatzDaten: UmsatzData[];
-  bestandsDaten: BestandData[];
-  abcResults: ABCResult[];
-  coOccurrences: CoOccurrencePair[];
-  cluster: AffinitaetsCluster[];
-  belegungsplan: WT[];
+// ============ OPTIMIZATION RESULT ============
+
+export interface OptimizationResult {
+  wts: WT[];
+  belegungsplan: BelegungsplanRow[];
   szenarien: SzenarioResult[];
-  wtConfigs: WTConfig[];
-  isProcessing: boolean;
-  error: string | null;
+  validation: ValidationResult;
+  stats: {
+    artikel_gesamt: number;
+    artikel_platziert: number;
+    wts_benoetigt: number;
+    wts_klein: number;
+    wts_gross: number;
+    gesamtbestand: number;
+  };
 }
