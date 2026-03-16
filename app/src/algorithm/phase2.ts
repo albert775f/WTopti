@@ -1,0 +1,128 @@
+import Graph from 'graphology';
+import louvain from 'graphology-communities-louvain';
+import type { ArtikelProcessed, BestellungData, WTConfig } from '../types';
+
+export interface CoOccurrenceMatrix {
+  [art1: string]: { [art2: string]: number };
+}
+
+export interface ClusterResult {
+  clusters: Map<string, number>; // artikelnummer → cluster_id
+  coMatrix: CoOccurrenceMatrix;
+  clusterSizes: Map<number, number>;
+}
+
+export function processPhase2(
+  processed: ArtikelProcessed[],
+  bestellungen: BestellungData[],
+  config: WTConfig,
+): ClusterResult {
+  const activeArticles = new Set(processed.map(p => String(p.artikelnummer)));
+
+  // Group orders by belegnummer
+  const belegMap = new Map<string, string[]>();
+  for (const b of bestellungen) {
+    const artNr = String(b.artikelnummer);
+    if (!activeArticles.has(artNr)) continue;
+    const beleg = String(b.belegnummer);
+    if (!belegMap.has(beleg)) belegMap.set(beleg, []);
+    belegMap.get(beleg)!.push(artNr);
+  }
+
+  // Build co-occurrence matrix
+  const coMatrix: CoOccurrenceMatrix = {};
+  for (const [, artikelList] of belegMap) {
+    const unique = [...new Set(artikelList)];
+    for (let i = 0; i < unique.length; i++) {
+      for (let j = i + 1; j < unique.length; j++) {
+        const a = unique[i];
+        const b = unique[j];
+        if (!coMatrix[a]) coMatrix[a] = {};
+        if (!coMatrix[b]) coMatrix[b] = {};
+        coMatrix[a][b] = (coMatrix[a][b] || 0) + 1;
+        coMatrix[b][a] = (coMatrix[b][a] || 0) + 1;
+      }
+    }
+  }
+
+  // Build graph with edges above threshold
+  const graph = new Graph({ type: 'undirected' });
+  for (const artNr of activeArticles) {
+    graph.addNode(artNr);
+  }
+
+  const schwellwert = config.co_occurrence_schwellwert;
+  const addedEdges = new Set<string>();
+  for (const [artA, neighbors] of Object.entries(coMatrix)) {
+    for (const [artB, weight] of Object.entries(neighbors)) {
+      if (weight < schwellwert) continue;
+      const edgeKey = artA < artB ? `${artA}|${artB}` : `${artB}|${artA}`;
+      if (addedEdges.has(edgeKey)) continue;
+      if (!graph.hasNode(artA) || !graph.hasNode(artB)) continue;
+      addedEdges.add(edgeKey);
+      graph.addEdge(artA, artB, { weight });
+    }
+  }
+
+  // Louvain community detection
+  const communities = louvain(graph, {
+    getEdgeWeight: 'weight',
+    resolution: 1,
+  });
+
+  // Assign cluster IDs; isolated nodes (no edges above threshold) → cluster 0
+  const clusters = new Map<string, number>();
+  for (const artNr of activeArticles) {
+    const degree = graph.degree(artNr);
+    if (degree === 0) {
+      clusters.set(artNr, 0);
+    } else {
+      clusters.set(artNr, communities[artNr] ?? 0);
+    }
+  }
+
+  // Post-processing: max 2 A-articles per cluster
+  const abcMap = new Map<string, 'A' | 'B' | 'C'>();
+  for (const p of processed) {
+    abcMap.set(String(p.artikelnummer), p.abc_klasse);
+  }
+
+  // Find max cluster ID for generating new sub-cluster IDs
+  let maxClusterId = 0;
+  for (const cid of clusters.values()) {
+    if (cid > maxClusterId) maxClusterId = cid;
+  }
+
+  // Group A-articles by cluster
+  const clusterAArticles = new Map<number, string[]>();
+  for (const [artNr, cid] of clusters) {
+    if (abcMap.get(artNr) === 'A' && cid !== 0) {
+      if (!clusterAArticles.has(cid)) clusterAArticles.set(cid, []);
+      clusterAArticles.get(cid)!.push(artNr);
+    }
+  }
+
+  // Split clusters with > 2 A-articles
+  for (const [, aArticles] of clusterAArticles) {
+    if (aArticles.length <= 2) continue;
+    // Keep first 2, move excess to new sub-clusters
+    const excess = aArticles.slice(2);
+    for (const artNr of excess) {
+      maxClusterId++;
+      clusters.set(artNr, maxClusterId);
+    }
+  }
+
+  // Assign cluster_id back to processed articles
+  for (const p of processed) {
+    p.cluster_id = clusters.get(String(p.artikelnummer)) ?? 0;
+  }
+
+  // Compute cluster sizes
+  const clusterSizes = new Map<number, number>();
+  for (const cid of clusters.values()) {
+    clusterSizes.set(cid, (clusterSizes.get(cid) || 0) + 1);
+  }
+
+  return { clusters, coMatrix, clusterSizes };
+}
