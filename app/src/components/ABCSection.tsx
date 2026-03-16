@@ -12,7 +12,7 @@ import {
   getPaginationRowModel,
   flexRender,
   createColumnHelper,
-  SortingState,
+  type SortingState,
 } from '@tanstack/react-table';
 import type { ArtikelProcessed } from '../types';
 
@@ -136,7 +136,7 @@ export default function ABCSection() {
           <BarChart data={top50}>
             <XAxis dataKey="name" tick={false} />
             <YAxis />
-            <Tooltip formatter={(v: number) => v.toLocaleString('de-DE')} />
+            <Tooltip formatter={(v) => Number(v).toLocaleString('de-DE')} />
             <Bar dataKey="umsatz">
               {top50.map((entry, i) => (
                 <Cell key={i} fill={ABC_COLORS[entry.abc]} />
@@ -156,13 +156,13 @@ export default function ABCSection() {
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie data={pieData[key]} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                  outerRadius={70} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                  outerRadius={70} label={({ name, percent }) => `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`}>
                   {pieData[key].map((entry, i) => (
                     <Cell key={i} fill={ABC_COLORS[entry.name]} />
                   ))}
                 </Pie>
                 <Legend />
-                <Tooltip formatter={(v: number) => v.toLocaleString('de-DE')} />
+                <Tooltip formatter={(v) => Number(v).toLocaleString('de-DE')} />
               </PieChart>
             </ResponsiveContainer>
           </div>

@@ -12,9 +12,9 @@ export function loadConstraints(json?: Constraint[]): Constraint[] {
 }
 
 export function checkConstraints(
-  constraints: Constraint[],
-  wt: { positionen: { artikelnummer: string }[] },
-  neuePosition: { artikelnummer: string },
+  _constraints: Constraint[],
+  _wt: { positionen: { artikelnummer: string }[] },
+  _neuePosition: { artikelnummer: string },
 ): { valid: boolean; verletzung?: string } {
   return { valid: true };
 }

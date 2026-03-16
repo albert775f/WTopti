@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, DragEvent } from 'react';
+import { useCallback, useState, useMemo, type DragEvent } from 'react';
 import { useAppState, useAppDispatch } from '../context/AppContext';
 import { parseFile, mapArtikel, mapBestellungen, mapUmsatz, mapBestand, validateHeaders } from '../utils/fileParser';
 import {
@@ -6,7 +6,7 @@ import {
   getCoreRowModel,
   flexRender,
   createColumnHelper,
-  ColumnDef,
+  type ColumnDef,
 } from '@tanstack/react-table';
 import type { WTConfig } from '../types';
 

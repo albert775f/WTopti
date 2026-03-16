@@ -3,8 +3,6 @@ import { useAppState } from '../context/AppContext';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import type { SzenarioResult } from '../types';
-
 export default function WTRatioSection() {
   const { result } = useAppState();
   const [customKlein, setCustomKlein] = useState(4145);

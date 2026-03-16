@@ -1,17 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useAppState } from '../context/AppContext';
-import {
-  useReactTable,
-  getCoreRowModel,
-  getExpandedRowModel,
-  getSortedRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  flexRender,
-  createColumnHelper,
-  SortingState,
-  Row,
-} from '@tanstack/react-table';
 import type { BelegungsplanRow, WTTyp } from '../types';
 
 interface GroupedWT {
@@ -26,7 +14,6 @@ interface GroupedWT {
 
 export default function BelegungsplanSection() {
   const { result } = useAppState();
-  const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [typFilter, setTypFilter] = useState<string>('all');
   const [abcFilter, setAbcFilter] = useState<string>('all');

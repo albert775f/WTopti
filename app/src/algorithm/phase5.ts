@@ -35,9 +35,7 @@ function buildSzenario(
 
   const avgGewicht = wtsMitPositionen.length > 0
     ? wtsMitPositionen.reduce((s, w) => {
-        const brutto = w.typ === 'KLEIN' ? 250_000 : 400_000;
-        const gewPct = (w.gesamtgewicht_kg / 24) * 100;
-        return s + gewPct;
+        return s + (w.gesamtgewicht_kg / 24) * 100;
       }, 0) / wtsMitPositionen.length
     : 0;
 

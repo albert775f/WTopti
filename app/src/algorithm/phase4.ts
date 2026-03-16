@@ -17,11 +17,7 @@ export function processPhase4(wts: WT[], config: WTConfig): ValidationResult {
       );
     }
 
-    // Hard fail: article height > 320mm assigned to WT
-    for (const pos of wt.positionen) {
-      // We can't access hoehe directly from WTPosition, so check via grundflaeche
-      // Height check is already done in phase1/phase3, but just in case:
-    }
+    // Height check is already done in phase1/phase3
 
     // Warning: weight 20-24kg
     if (

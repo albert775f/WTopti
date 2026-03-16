@@ -42,7 +42,6 @@ export default function WTVisualization() {
 
   const isKlein = wt!.typ === 'KLEIN';
   const realW = isKlein ? 500 : 500;
-  const realH = isKlein ? 500 : 800;
   const svgW = isKlein ? 250 : 250;
   const svgH = isKlein ? 250 : 400;
   const scale = svgW / realW;

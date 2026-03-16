@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, ReactNode, Dispatch } from 'react';
+import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from 'react';
 import type { ArtikelData, BestellungData, UmsatzData, BestandData, WTConfig, OptimizationResult, ArtikelProcessed } from '../types';
 
 export interface AppState {

@@ -1,4 +1,4 @@
-import type { ArtikelProcessed, WTConfig, WT, WTTyp, WTPosition } from '../types';
+import type { ArtikelProcessed, WTConfig, WT, WTTyp } from '../types';
 import type { ClusterResult } from './phase2';
 
 function calcNutzflaeche(wtTyp: WTTyp, anzahlArtikelTypen: number, config: WTConfig): number {
@@ -92,7 +92,7 @@ function canFit(
 
 export function processPhase3(
   processed: ArtikelProcessed[],
-  clusters: ClusterResult,
+  _clusters: ClusterResult,
   config: WTConfig,
 ): WT[] {
   const allWTs: WT[] = [];
