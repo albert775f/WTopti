@@ -1,129 +1,154 @@
 /**
- * Excel-Spalten-Mapping: Mappt tatsächliche Excel-Spaltennamen auf interne Feld-Namen.
- * Basierend auf Analyse der 4 Excel-Dateien vom 16.03.2026.
+ * Excel-Spalten-Mapping: Mappt tatsächliche Excel-Spaltennamen auf TypeScript-Feldnamen.
+ *
+ * Basierend auf Analyse der 4 Excel-Dateien (16.03.2026):
+ *
+ * Artikelliste.xlsx (Sheet "Verpackungsvolumen Atrikel"):
+ *   Nummer, Bezeichnung, Höhe, Breite, Länge, Gewicht in kg,
+ *   Anmerkungen, Column8, Volumen in Liter, Sperrgut, Max Packmenge Sperrgut
+ *
+ * Bestellungen Sauber.xlsx (Sheet "Bestellungen"):
+ *   VK-Stufe, Datum, Kunden-Nr., Beleg-Nr., Lfd.Nr. Pos, Menge,
+ *   Nummer, Bezeichnung, Gewicht Umsatz, Gewicht Artikel,
+ *   Anzahl Pakete, Gewicht Pro Paket, Versandnr., Versandart
+ *
+ * Artikelumsatz.xlsx (Sheet "Artikelumsatz"):
+ *   Nummer, Artikel, Artikelmenge
+ *
+ * Bestandsliste 13.03.2026.xls (Sheet "2026-03-13"):
+ *   nummer, gesamt_x
  */
 
-export interface ColumnMapping {
-  /** Name der Spalte in der Excel-Datei */
-  excelColumn: string;
-  /** Internes Feld im TypeScript-Interface */
-  field: string;
-  /** Datentyp für Parsing */
-  type: 'string' | 'number' | 'boolean';
-  /** Ist das Feld erforderlich? */
-  required: boolean;
-}
+// ============================================================
+// Artikelliste.xlsx → ArtikelData
+// ============================================================
+export const ARTIKELLISTE_MAPPING: Record<string, string> = {
+  'Nummer':               'artikelnummer',
+  'Bezeichnung':          'bezeichnung',
+  'Höhe':                 'hoehe',
+  'Breite':               'breite',
+  'Länge':                'laenge',
+  'Gewicht in kg':        'gewicht_kg',
+  'Volumen in Liter':     'volumen_l',
+};
 
 // ============================================================
-// Artikelliste.xlsx – Sheet "Verpackungsvolumen Atrikel"
+// Bestellungen Sauber.xlsx → BestellungData
 // ============================================================
-export const ARTIKEL_MAPPING: ColumnMapping[] = [
-  { excelColumn: 'Nummer',                   field: 'artikelnummer',           type: 'number',  required: true },
-  { excelColumn: 'Bezeichnung',              field: 'bezeichnung',            type: 'string',  required: true },
-  { excelColumn: 'Höhe',                     field: 'hoehe',                  type: 'number',  required: true },
-  { excelColumn: 'Breite',                   field: 'breite',                 type: 'number',  required: true },
-  { excelColumn: 'Länge',                    field: 'laenge',                 type: 'number',  required: true },
-  { excelColumn: 'Gewicht in kg',            field: 'gewicht_kg',             type: 'number',  required: true },
-  { excelColumn: 'Volumen in Liter',         field: 'volumen_l',              type: 'number',  required: false },
-  { excelColumn: 'Sperrgut',                 field: 'sperrgut',               type: 'boolean', required: false },
-  { excelColumn: 'Max Packmenge Sperrgut',   field: 'max_packmenge_sperrgut', type: 'number',  required: false },
-];
+export const BESTELLUNGEN_MAPPING: Record<string, string> = {
+  'Nummer':      'artikelnummer',
+  'Menge':       'menge',
+  'Beleg-Nr.':   'belegnummer',
+};
 
 // ============================================================
-// Bestellungen Sauber.xlsx – Sheet "Bestellungen"
+// Artikelumsatz.xlsx → UmsatzData
 // ============================================================
-export const BESTELLUNG_MAPPING: ColumnMapping[] = [
-  { excelColumn: 'Beleg-Nr.',   field: 'belegnummer',    type: 'string',  required: true },
-  { excelColumn: 'Nummer',      field: 'artikelnummer',  type: 'number',  required: true },
-  { excelColumn: 'Menge',       field: 'menge',          type: 'number',  required: true },
-  { excelColumn: 'Bezeichnung', field: 'bezeichnung',    type: 'string',  required: false },
-  { excelColumn: 'Datum',       field: 'datum',          type: 'string',  required: false },
-  { excelColumn: 'Kunden-Nr.',  field: 'kundennummer',   type: 'string',  required: false },
-];
+export const UMSATZ_MAPPING: Record<string, string> = {
+  'Nummer':        'artikelnummer',
+  'Artikel':       'bezeichnung',
+  'Artikelmenge':  'artikelmenge',
+};
 
 // ============================================================
-// Artikelumsatz.xlsx – Sheet "Artikelumsatz"
+// Bestandsliste → BestandData
 // ============================================================
-export const UMSATZ_MAPPING: ColumnMapping[] = [
-  { excelColumn: 'Nummer',        field: 'artikelnummer', type: 'number', required: true },
-  { excelColumn: 'Artikel',       field: 'bezeichnung',   type: 'string', required: false },
-  { excelColumn: 'Artikelmenge',  field: 'artikelmenge',   type: 'number', required: true },
-];
-
-// ============================================================
-// Bestandsliste 13.03.2026.xls – Sheet "2026-03-13"
-// ============================================================
-export const BESTAND_MAPPING: ColumnMapping[] = [
-  { excelColumn: 'nummer',    field: 'artikelnummer', type: 'number', required: true },
-  { excelColumn: 'gesamt_x',  field: 'bestand',      type: 'number', required: true },
-];
-
-// ============================================================
-// Helper: Generische Excel-zu-Objekt Konvertierung
-// ============================================================
-
-/**
- * Konvertiert eine Excel-Zeile (key-value Objekt) in ein typisiertes Objekt
- * basierend auf dem Column-Mapping.
- */
-export function mapRow<T>(row: Record<string, unknown>, mapping: ColumnMapping[]): T | null {
-  const result: Record<string, unknown> = {};
-
-  for (const col of mapping) {
-    const raw = row[col.excelColumn];
-
-    if (raw === undefined || raw === null || raw === '') {
-      if (col.required) return null; // Skip rows with missing required fields
-      result[col.field] = col.type === 'number' ? 0 : col.type === 'boolean' ? false : '';
-      continue;
-    }
-
-    switch (col.type) {
-      case 'number': {
-        const parsed = typeof raw === 'number' ? raw : parseFloat(String(raw).trim());
-        if (isNaN(parsed)) {
-          if (col.required) return null;
-          result[col.field] = 0;
-        } else {
-          result[col.field] = parsed;
-        }
-        break;
-      }
-      case 'boolean':
-        result[col.field] = raw === true || raw === 1 || String(raw).toLowerCase() === 'ja' || String(raw) === '1';
-        break;
-      case 'string':
-      default:
-        result[col.field] = String(raw).trim();
-        break;
-    }
-  }
-
-  return result as T;
-}
-
-/**
- * Konvertiert ein Array von Excel-Zeilen in typisierte Objekte.
- * Filtert ungültige Zeilen (mit fehlenden Pflichtfeldern) heraus.
- */
-export function mapRows<T>(rows: Record<string, unknown>[], mapping: ColumnMapping[]): T[] {
-  const results: T[] = [];
-  for (const row of rows) {
-    const mapped = mapRow<T>(row, mapping);
-    if (mapped !== null) {
-      results.push(mapped);
-    }
-  }
-  return results;
-}
+export const BESTAND_MAPPING: Record<string, string> = {
+  'nummer':    'artikelnummer',
+  'gesamt_x':  'bestand',
+};
 
 // ============================================================
 // Expected Sheet Names
 // ============================================================
-
 export const EXPECTED_SHEETS = {
   artikelliste: 'Verpackungsvolumen Atrikel',
   bestellungen: 'Bestellungen',
   artikelumsatz: 'Artikelumsatz',
-  bestandsliste: /^\d{4}-\d{2}-\d{2}$/, // Dynamic date-based sheet name
+  bestandsliste: /^\d{4}-\d{2}-\d{2}$/,  // dynamischer Datumsname
 } as const;
+
+// ============================================================
+// Erkennt die 14 Monatsspalten in der Umsatz-Datei
+// ============================================================
+
+/**
+ * Sucht nach Monatsspalten-Pattern in den Headers.
+ * Die reale Datei (Artikelumsatz.xlsx) hat aktuell KEINE Monatsspalten,
+ * nur "Artikelmenge" (Gesamtwert). Diese Funktion ist für den Fall vorbereitet,
+ * dass zukünftig monatliche Umsatzdaten geliefert werden.
+ *
+ * Erkennbare Patterns: "M01"..."M14", "Jan"..."Dez", "Umsatz_M01"..."Umsatz_M14",
+ * oder numerisch "1"..."14"
+ */
+export function detectUmsatzMonthColumns(headers: string[]): string[] {
+  // Pattern 1: "Umsatz_M01" ... "Umsatz_M14"
+  const umsatzPattern = headers.filter(h => /^Umsatz_M\d{2}$/i.test(h));
+  if (umsatzPattern.length > 0) {
+    return umsatzPattern.sort();
+  }
+
+  // Pattern 2: "M01" ... "M14"
+  const mPattern = headers.filter(h => /^M\d{2}$/i.test(h));
+  if (mPattern.length > 0) {
+    return mPattern.sort();
+  }
+
+  // Pattern 3: German month names
+  const monthNames = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+  const monthCols = headers.filter(h => monthNames.some(m => h.startsWith(m)));
+  if (monthCols.length > 0) {
+    return monthCols;
+  }
+
+  // No month columns found — fallback
+  return [];
+}
+
+// ============================================================
+// Generic mapping helper
+// ============================================================
+
+/**
+ * Mappt eine Excel-Zeile (Record mit Spaltennamen als Keys) auf ein Objekt
+ * mit den internen Feldnamen aus dem Mapping.
+ */
+export function applyMapping(
+  row: Record<string, unknown>,
+  mapping: Record<string, string>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [excelCol, field] of Object.entries(mapping)) {
+    const raw = row[excelCol];
+    if (raw !== undefined && raw !== null) {
+      result[field] = typeof raw === 'string' ? raw.trim() : raw;
+    }
+  }
+  return result;
+}
+
+/**
+ * Mappt ein Array von Excel-Zeilen und konvertiert Nummernfelder.
+ */
+export function mapAndParseRows<T>(
+  rows: Record<string, unknown>[],
+  mapping: Record<string, string>,
+  numberFields: string[] = [],
+): T[] {
+  return rows
+    .map(row => {
+      const mapped = applyMapping(row, mapping);
+      for (const field of numberFields) {
+        if (mapped[field] !== undefined) {
+          const parsed = parseFloat(String(mapped[field]).trim());
+          mapped[field] = isNaN(parsed) ? 0 : parsed;
+        }
+      }
+      return mapped as T;
+    })
+    .filter(row => {
+      // Filtere Zeilen ohne Artikelnummer
+      const nr = (row as Record<string, unknown>)['artikelnummer'];
+      return nr !== undefined && nr !== null && nr !== '' && nr !== 0;
+    });
+}
