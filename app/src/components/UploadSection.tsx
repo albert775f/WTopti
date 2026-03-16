@@ -205,7 +205,7 @@ function ConfigPanel() {
   );
 }
 
-export default function UploadSection() {
+export default function UploadSection({ onStartOptimization }: { onStartOptimization?: () => void }) {
   const state = useAppState();
   const dispatch = useAppDispatch();
   const [files, setFiles] = useState<Record<FileType, FileInfo | null>>({
@@ -301,7 +301,8 @@ export default function UploadSection() {
             : 'bg-gray-300 cursor-not-allowed'
         }`}
         onClick={() => {
-          if (allValid) {
+          if (allValid && onStartOptimization) {
+            onStartOptimization();
             dispatch({ type: 'SET_SECTION', section: 'abc' });
           }
         }}
