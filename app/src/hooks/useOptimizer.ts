@@ -1,19 +1,18 @@
 import { useRef, useCallback } from 'react';
 import { useAppDispatch } from '../context/AppContext';
 import type { WorkerMessage } from '../workers/optimizer.worker';
-import type { WTConfig, ArtikelData, BestellungData, UmsatzData, BestandData } from '../types';
+import type { WTConfig, ArtikelData, BestellungData, BestandData } from '../types';
 
 export function useOptimizer() {
   const workerRef = useRef<Worker | null>(null);
   const dispatch = useAppDispatch();
 
-  const startOptimization = useCallback((
-    artikel: ArtikelData[],
-    bestellungen: BestellungData[],
-    umsatz: UmsatzData[],
-    bestand: BestandData[],
-    config: WTConfig
-  ) => {
+  const startOptimization = useCallback((data: {
+    artikel: ArtikelData[];
+    bestellungen: BestellungData[];
+    bestand: BestandData[];
+    config: WTConfig;
+  }) => {
     if (workerRef.current) workerRef.current.terminate();
 
     workerRef.current = new Worker(
@@ -44,7 +43,7 @@ export function useOptimizer() {
       console.error('Worker error:', err);
     };
 
-    workerRef.current.postMessage({ artikel, bestellungen, umsatz, bestand, config });
+    workerRef.current.postMessage(data);
   }, [dispatch]);
 
   const stopOptimization = useCallback(() => {
