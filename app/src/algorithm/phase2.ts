@@ -70,14 +70,29 @@ export function processPhase2(
     resolution: 1,
   });
 
-  // Assign cluster IDs; isolated nodes (no edges above threshold) → cluster 0
+  // Assign cluster IDs: connected nodes get Louvain community, isolates get unique IDs
   const clusters = new Map<string, number>();
   for (const artNr of activeArticles) {
     const degree = graph.degree(artNr);
     if (degree === 0) {
-      clusters.set(artNr, 0);
+      // Skip isolates for now — assigned unique IDs below
+      continue;
     } else {
       clusters.set(artNr, communities[artNr] ?? 0);
+    }
+  }
+
+  // Find max cluster ID from Louvain assignments
+  let maxClusterId = 0;
+  for (const cid of clusters.values()) {
+    if (cid > maxClusterId) maxClusterId = cid;
+  }
+
+  // Each isolated node gets its own unique cluster (prevents mega-cluster)
+  for (const artNr of activeArticles) {
+    if (!clusters.has(artNr)) {
+      maxClusterId++;
+      clusters.set(artNr, maxClusterId);
     }
   }
 
@@ -87,16 +102,10 @@ export function processPhase2(
     abcMap.set(String(p.artikelnummer), p.abc_klasse);
   }
 
-  // Find max cluster ID for generating new sub-cluster IDs
-  let maxClusterId = 0;
-  for (const cid of clusters.values()) {
-    if (cid > maxClusterId) maxClusterId = cid;
-  }
-
-  // Group A-articles by cluster
+  // Group A-articles by cluster (check all clusters, including Louvain community 0)
   const clusterAArticles = new Map<number, string[]>();
   for (const [artNr, cid] of clusters) {
-    if (abcMap.get(artNr) === 'A' && cid !== 0) {
+    if (abcMap.get(artNr) === 'A') {
       if (!clusterAArticles.has(cid)) clusterAArticles.set(cid, []);
       clusterAArticles.get(cid)!.push(artNr);
     }
