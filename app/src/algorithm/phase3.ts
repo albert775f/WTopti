@@ -164,6 +164,10 @@ export function processPhase3(
       const capPerStrip = stripCapacity(artikel);
       const artStripDepth = stripDepth(artikel);
 
+      // Skip articles that can't fit on this WT type
+      if (capPerStrip <= 0) continue;        // laenge_mm > WT_WIDTH (500mm)
+      if (artStripDepth > wtDepth) continue;  // breite_mm > WT depth
+
       while (remaining > 0) {
         const placeCount = Math.min(remaining, capPerStrip);
         const placeWeight = placeCount * artikel.gewicht_kg;
