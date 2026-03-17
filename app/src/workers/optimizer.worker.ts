@@ -6,7 +6,6 @@ import { processPhase5 } from '../algorithm/phase5';
 import type {
   ArtikelData,
   BestellungData,
-  UmsatzData,
   BestandData,
   WTConfig,
   OptimizationResult,
@@ -15,7 +14,6 @@ import type {
 export interface WorkerInput {
   artikel: ArtikelData[];
   bestellungen: BestellungData[];
-  umsatz: UmsatzData[];
   bestand: BestandData[];
   config: WTConfig;
 }
@@ -31,7 +29,7 @@ export interface WorkerMessage {
 
 self.onmessage = (e: MessageEvent<WorkerInput>) => {
   try {
-    const { artikel, bestellungen, umsatz, bestand, config } = e.data;
+    const { artikel, bestellungen, bestand, config } = e.data;
 
     self.postMessage({
       type: 'progress',
@@ -40,7 +38,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       progress: 0,
     } satisfies WorkerMessage);
 
-    const phase1Result = processPhase1(artikel, bestellungen, umsatz, bestand, config);
+    const phase1Result = processPhase1(artikel, bestellungen, bestand, config);
     self.postMessage({ type: 'progress', phase: 1, progress: 20 } satisfies WorkerMessage);
 
     self.postMessage({
@@ -127,7 +125,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     };
 
     const runPipeline = (cfg: WTConfig): OptimizationResult => {
-      const r1 = processPhase1(artikel, bestellungen, umsatz, bestand, cfg);
+      const r1 = processPhase1(artikel, bestellungen, bestand, cfg);
       const r2 = processPhase2(r1.processed, bestellungen, cfg);
       const w = processPhase3(r1.processed, r2, cfg);
       return { ...baseResult, wts: w };
