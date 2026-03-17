@@ -61,6 +61,7 @@ const DEFAULT_CONFIG: WTConfig = {
   teiler_modus: 'percent',
   co_occurrence_schwellwert: 3,
   a_artikel_scatter_n: 3,
+  warehouse_area_m2: 1480.65,
 };
 
 const initialState: AppState = {
