@@ -43,21 +43,21 @@ interface WTState {
 
 function updateWTMetrics(wtState: WTState, config: WTConfig): void {
   const wt = wtState.wt;
-  wt.anzahl_teiler = Math.max(0, wtState.stripCount - 1);
-
-  // Net area = width × (total_depth - teiler space)
   const wtDepth = getWTDepth(wt.typ);
-  const teilerLoss = wt.anzahl_teiler * config.teiler_breite_mm * WT_WIDTH;
-  wt.flaeche_netto_mm2 = (WT_WIDTH * wtDepth) - teilerLoss;
+  const teilerCount = Math.max(0, wtState.stripCount - 1);
+  const teilerLoss = teilerCount * config.teiler_breite_mm;
+  const usableDepth = Math.max(0, wtDepth - teilerLoss);
 
-  // Compute used area from positions
-  const belegtFlaeche = wt.positionen.reduce((s, p) => s + p.grundflaeche_mm2 * p.stueckzahl, 0);
-  wt.flaeche_netto_pct = wt.flaeche_netto_mm2 > 0
-    ? Math.round((belegtFlaeche / wt.flaeche_netto_mm2) * 10000) / 100
+  wt.anzahl_teiler = teilerCount;
+  wt.flaeche_brutto_mm2 = WT_WIDTH * wtDepth;
+  wt.flaeche_netto_mm2 = WT_WIDTH * usableDepth;
+  wt.flaeche_netto_pct = usableDepth > 0
+    ? Math.round((wtState.usedDepth / usableDepth) * 10000) / 100
     : 0;
 
-  wt.gesamtgewicht_kg = wt.positionen.reduce((s, p) => s + p.gewicht_kg * p.stueckzahl, 0);
-  wt.gesamtgewicht_kg = Math.round(wt.gesamtgewicht_kg * 100) / 100;
+  wt.gesamtgewicht_kg = Math.round(
+    wt.positionen.reduce((s, p) => s + p.gewicht_kg * p.stueckzahl, 0) * 100
+  ) / 100;
 
   if (wt.gesamtgewicht_kg > config.gewicht_hard_kg) {
     wt.gewicht_status = 'hard_fail';
