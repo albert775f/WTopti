@@ -210,6 +210,8 @@ export function processPhase3(
                 gewicht_kg: artikel.gewicht_kg,
                 abc_klasse: artikel.abc_klasse,
                 breite_mm: artikel.breite_mm,
+                laenge_mm: artikel.laenge_mm,
+                max_stapelhoehe: artikel.max_stapelhoehe,
               });
               wtState.stripCount++;
             }
@@ -253,6 +255,8 @@ export function processPhase3(
             gewicht_kg: artikel.gewicht_kg,
             abc_klasse: artikel.abc_klasse,
             breite_mm: artikel.breite_mm,
+            laenge_mm: artikel.laenge_mm,
+            max_stapelhoehe: artikel.max_stapelhoehe,
           });
           newState.usedDepth = artStripDepth;
           newState.stripCount = 1;

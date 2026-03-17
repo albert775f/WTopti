@@ -41,38 +41,43 @@ export default function WTVisualization() {
   }
 
   const isKlein = wt!.typ === 'KLEIN';
-  const realW = isKlein ? 500 : 500;
-  const svgW = isKlein ? 250 : 250;
+  const realDepth = isKlein ? 500 : 800;
+  const svgW = 250;
   const svgH = isKlein ? 250 : 400;
-  const scale = svgW / realW;
+  // Both KLEIN (500×500) and GROSS (500×800) map to svgW×svgH at scale 0.5
+  const scale = svgW / 500;
 
-  // Layout positions in rows
+  // Strip-aware layout: each position occupies strips along the depth axis
   const layoutRects = useMemo(() => {
     if (!wt) return [];
     const rects: { x: number; y: number; w: number; h: number; pos: WTPosition }[] = [];
-    let curX = 0;
     let curY = 0;
-    let rowHeight = 0;
 
-    for (const pos of wt.positionen) {
-      const area = pos.grundflaeche_mm2;
-      // Approximate as square
-      const side = Math.sqrt(area);
-      const w = Math.min(side, realW);
-      const h = area / w;
+    for (let i = 0; i < wt.positionen.length; i++) {
+      const pos = wt.positionen[i];
 
-      if (curX + w > realW) {
-        curX = 0;
-        curY += rowHeight + 2;
-        rowHeight = 0;
-      }
+      // Use stored dimensions; fall back to sqrt approximation for legacy data
+      const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
+      const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
+      const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
 
-      rects.push({ x: curX, y: curY, w, h, pos });
-      curX += w + 2;
-      rowHeight = Math.max(rowHeight, h);
+      const slotsAcross = Math.max(1, Math.floor(500 / laenge));
+      const capPerStrip = slotsAcross * maxStapel;
+      const stripsNeeded = Math.max(1, Math.ceil(pos.stueckzahl / capPerStrip));
+
+      // Teiler gap before each new article type (not before the first)
+      if (i > 0) curY += 5;
+
+      const rectW = Math.min(slotsAcross * laenge, 500);
+      const rectH = stripsNeeded * breite;
+
+      rects.push({ x: 0, y: curY, w: rectW, h: rectH, pos });
+      curY += rectH;
+
+      if (curY >= realDepth) break; // safety stop
     }
     return rects;
-  }, [wt, realW]);
+  }, [wt, realDepth]);
 
   function getColor(pos: WTPosition): string {
     if (colorMode === 'abc') return ABC_COLORS[pos.abc_klasse] ?? '#9ca3af';
@@ -142,11 +147,11 @@ export default function WTVisualization() {
                 onMouseLeave={() => setTooltip(null)}
               />
             ))}
-            {/* Divider lines (approximate) */}
-            {wt.anzahl_teiler > 0 && Array.from({ length: wt.anzahl_teiler }).map((_, i) => {
-              const x = ((i + 1) * svgW) / (wt.anzahl_teiler + 1);
-              return <line key={`d-${i}`} x1={x} y1={0} x2={x} y2={svgH}
-                stroke="#d1d5db" strokeWidth={1} strokeDasharray="3,3" />;
+            {/* Teiler lines at actual positions between article strips */}
+            {layoutRects.slice(1).map((r, i) => {
+              const teilerY = (r.y - 2.5) * scale;
+              return <line key={`t-${i}`} x1={0} y1={teilerY} x2={svgW} y2={teilerY}
+                stroke="#94a3b8" strokeWidth={1} strokeDasharray="4,2" />;
             })}
           </svg>
 
@@ -167,7 +172,7 @@ export default function WTVisualization() {
             <div className="fixed bg-gray-900 text-white text-xs px-3 py-2 rounded pointer-events-none z-50"
               style={{ left: tooltip.x + 10, top: tooltip.y - 40 }}>
               <p className="font-semibold">{tooltip.pos.bezeichnung}</p>
-              <p>{tooltip.pos.artikelnummer} | {Math.round(Math.sqrt(tooltip.pos.grundflaeche_mm2))}×{Math.round(Math.sqrt(tooltip.pos.grundflaeche_mm2))} mm</p>
+              <p>{tooltip.pos.artikelnummer} | {tooltip.pos.breite_mm ?? '?'}×{tooltip.pos.laenge_mm ?? '?'} mm</p>
               <p>{tooltip.pos.gewicht_kg.toFixed(2)} kg | {tooltip.pos.stueckzahl} Stk | {tooltip.pos.abc_klasse}</p>
             </div>
           )}

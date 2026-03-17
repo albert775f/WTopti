@@ -71,7 +71,9 @@ export interface WTPosition {
   grundflaeche_mm2: number;
   gewicht_kg: number;
   abc_klasse: 'A' | 'B' | 'C';
-  breite_mm?: number;  // strip depth for balancing recalculation
+  breite_mm?: number;      // strip depth (article breite, for balancing + visualization)
+  laenge_mm?: number;      // article length (for strip-aware visualization)
+  max_stapelhoehe?: number; // floor(320/hoehe_mm) (for strip capacity in visualization)
 }
 
 export interface WT {
