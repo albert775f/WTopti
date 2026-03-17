@@ -172,7 +172,16 @@ export function processPhase3(
           if (placed) break;
           for (const wtState of clusterWTStates) {
             const wtDepth = getWTDepth(wtState.wt.typ);
-            const needsTeiler = wtState.stripCount > 0;
+
+            // Check if this article already has a position on this WT
+            const existingPos = wtState.wt.positionen.find(
+              p => p.artikelnummer === String(artikel.artikelnummer),
+            );
+            const isNewArticleType = !existingPos;
+
+            // Teiler only needed between DIFFERENT article types, not between
+            // continuation strips of the same article
+            const needsTeiler = isNewArticleType && wtState.stripCount > 0;
             const depthNeeded = artStripDepth + (needsTeiler ? config.teiler_breite_mm : 0);
             const remainingDepth = wtDepth - wtState.usedDepth;
 
@@ -185,18 +194,23 @@ export function processPhase3(
             if (maxByWeight <= 0) continue;
             const actualPlace = Math.min(placeCount, maxByWeight);
 
-            // Place strip
-            wtState.wt.positionen.push({
-              artikelnummer: String(artikel.artikelnummer),
-              bezeichnung: artikel.bezeichnung,
-              stueckzahl: actualPlace,
-              grundflaeche_mm2: artikel.grundflaeche_mm2,
-              gewicht_kg: artikel.gewicht_kg,
-              abc_klasse: artikel.abc_klasse,
-              breite_mm: artikel.breite_mm,
-            });
-            wtState.usedDepth += depthNeeded;
-            wtState.stripCount++;
+            if (existingPos) {
+              // Continuation strip: merge into existing position, no new teiler
+              existingPos.stueckzahl += actualPlace;
+            } else {
+              // New article type on this WT: push position, count new strip
+              wtState.wt.positionen.push({
+                artikelnummer: String(artikel.artikelnummer),
+                bezeichnung: artikel.bezeichnung,
+                stueckzahl: actualPlace,
+                grundflaeche_mm2: artikel.grundflaeche_mm2,
+                gewicht_kg: artikel.gewicht_kg,
+                abc_klasse: artikel.abc_klasse,
+                breite_mm: artikel.breite_mm,
+              });
+              wtState.stripCount++;
+            }
+            wtState.usedDepth += depthNeeded; // physical depth always consumed
             updateWTMetrics(wtState, config);
             remaining -= actualPlace;
             placed = true;
