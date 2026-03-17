@@ -1,4 +1,5 @@
-import { useAppState, useAppDispatch } from './context/AppContext';
+import { useEffect } from 'react';
+import { useAppState, useAppDispatch, useAppActions } from './context/AppContext';
 import { useOptimizer } from './hooks/useOptimizer';
 import { processPhase1 } from './algorithm/phase1';
 import UploadSection from './components/UploadSection';
@@ -42,20 +43,61 @@ function ProgressOverlay() {
 export default function App() {
   const state = useAppState();
   const dispatch = useAppDispatch();
+  const { checkApiStatus } = useAppActions();
   const { startOptimization } = useOptimizer();
 
-  const handleStartOptimization = () => {
+  // Check backend status on mount
+  useEffect(() => {
+    checkApiStatus();
+  }, [checkApiStatus]);
+
+  const handleStartOptimization = (data: { artikel: any[]; bestellungen: any[]; bestand: any[] }) => {
     // Run Phase 1 synchronously first for ABC display
     const { processed } = processPhase1(
-      state.artikelRaw, state.bestellungenRaw, state.umsatzRaw, state.bestandRaw, state.config
+      data.artikel, data.bestellungen, data.bestand, state.config
     );
     dispatch({ type: 'SET_ARTIKEL_PROCESSED', payload: processed });
 
     // Run full pipeline in worker
-    startOptimization(
-      state.artikelRaw, state.bestellungenRaw, state.umsatzRaw, state.bestandRaw, state.config
-    );
+    startOptimization({
+      artikel: data.artikel,
+      bestellungen: data.bestellungen,
+      bestand: data.bestand,
+      config: state.config,
+    });
+    dispatch({ type: 'SET_SECTION', section: 'abc' });
   };
+
+  // Loading state
+  if (state.apiLoading && state.apiStatus === null) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-100">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          <p className="mt-3 text-sm text-gray-600">Verbindung zum Backend...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Backend error state
+  if (state.apiError && state.apiStatus === null) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-100">
+        <div className="max-w-md bg-white rounded-lg border border-red-200 p-6 text-center">
+          <p className="text-3xl mb-3">⚠️</p>
+          <h2 className="text-lg font-bold text-red-800 mb-2">Backend nicht erreichbar</h2>
+          <p className="text-sm text-red-700 mb-4">{state.apiError}</p>
+          <button
+            onClick={() => checkApiStatus()}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+          >
+            Erneut versuchen
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const renderSection = () => {
     switch (state.activeSection) {
