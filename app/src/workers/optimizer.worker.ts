@@ -131,7 +131,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       return { ...baseResult, wts: w };
     };
 
-    const szenarien = processPhase5(baseResult, config, runPipeline);
+    const szenarien = processPhase5(baseResult, config, runPipeline, phase2Result.coMatrix);
     baseResult.szenarien = szenarien;
 
     self.postMessage({ type: 'progress', phase: 5, progress: 100 } satisfies WorkerMessage);

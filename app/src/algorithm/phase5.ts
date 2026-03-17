@@ -1,8 +1,8 @@
 import type { WTConfig, SzenarioResult, OptimizationResult } from '../types';
+import type { CoOccurrenceMatrix } from './phase2';
 
-function calcCoOccurrenceScore(result: OptimizationResult): number {
+function calcCoOccurrenceScore(result: OptimizationResult, coMatrix: CoOccurrenceMatrix): number {
   // Average co-occurrence value for article pairs on the same WT
-  // Since we don't have the coMatrix here, approximate from cluster coherence
   let totalPairs = 0;
   let totalScore = 0;
 
@@ -11,8 +11,8 @@ function calcCoOccurrenceScore(result: OptimizationResult): number {
     for (let i = 0; i < arts.length; i++) {
       for (let j = i + 1; j < arts.length; j++) {
         totalPairs++;
-        // Articles on same WT and same cluster get score 1
-        totalScore += 1;
+        const coScore = (coMatrix[arts[i]]?.[arts[j]] ?? 0) + (coMatrix[arts[j]]?.[arts[i]] ?? 0);
+        totalScore += coScore;
       }
     }
   }
@@ -25,6 +25,7 @@ function buildSzenario(
   anzahlKlein: number,
   anzahlGross: number,
   result: OptimizationResult,
+  coMatrix: CoOccurrenceMatrix,
 ): SzenarioResult {
   const stellplaetze = anzahlKlein + anzahlGross * 1.5;
 
@@ -45,7 +46,7 @@ function buildSzenario(
     w => w.gesamtgewicht_kg > 20 && w.gesamtgewicht_kg <= 24,
   ).length;
 
-  const coScore = calcCoOccurrenceScore(result);
+  const coScore = calcCoOccurrenceScore(result, coMatrix);
 
   let empfehlung = '';
   if (avgFlaeche < 50) {
@@ -74,17 +75,18 @@ export function processPhase5(
   baseResult: OptimizationResult,
   config: WTConfig,
   runFullPipeline: (cfg: WTConfig) => OptimizationResult,
+  coMatrix: CoOccurrenceMatrix,
 ): SzenarioResult[] {
   const szenarien: SzenarioResult[] = [];
 
   // 1. "Aktuell"
-  szenarien.push(buildSzenario('Aktuell', config.anzahl_klein, config.anzahl_gross, baseResult));
+  szenarien.push(buildSzenario('Aktuell', config.anzahl_klein, config.anzahl_gross, baseResult, coMatrix));
 
   // 2. "Nur Kleine": convert all capacity to K-equivalents
   const totalKEquiv = config.anzahl_klein + config.anzahl_gross * 1.5;
   const nurKleinConfig = { ...config, anzahl_klein: Math.round(totalKEquiv), anzahl_gross: 0 };
   const nurKleinResult = runFullPipeline(nurKleinConfig);
-  szenarien.push(buildSzenario('Nur Kleine', nurKleinConfig.anzahl_klein, 0, nurKleinResult));
+  szenarien.push(buildSzenario('Nur Kleine', nurKleinConfig.anzahl_klein, 0, nurKleinResult, coMatrix));
 
   // 3. "Mehr Große": 25% weniger Klein, proportional mehr Groß (2G = 3K)
   const wenigerKlein = Math.round(config.anzahl_klein * 0.75);
@@ -92,7 +94,7 @@ export function processPhase5(
   const mehrGross = config.anzahl_gross + Math.round(freigesetztK * 2 / 3);
   const mehrGrossConfig = { ...config, anzahl_klein: wenigerKlein, anzahl_gross: mehrGross };
   const mehrGrossResult = runFullPipeline(mehrGrossConfig);
-  szenarien.push(buildSzenario('Mehr Große', wenigerKlein, mehrGross, mehrGrossResult));
+  szenarien.push(buildSzenario('Mehr Große', wenigerKlein, mehrGross, mehrGrossResult, coMatrix));
 
   // 4. "Optimiert": test 5 variants (±10%, ±20% ratio) → best utilization
   const variants = [-0.2, -0.1, 0, 0.1, 0.2];
@@ -105,7 +107,7 @@ export function processPhase5(
     const gShift = config.anzahl_gross + Math.round(kDiff * 2 / 3);
     const varConfig = { ...config, anzahl_klein: kShift, anzahl_gross: Math.max(0, gShift) };
     const varResult = runFullPipeline(varConfig);
-    const scenario = buildSzenario('Optimiert', kShift, Math.max(0, gShift), varResult);
+    const scenario = buildSzenario('Optimiert', kShift, Math.max(0, gShift), varResult, coMatrix);
     if (scenario.auslastung_flaeche_avg > bestAuslastung) {
       bestAuslastung = scenario.auslastung_flaeche_avg;
       bestVariant = scenario;
