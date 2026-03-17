@@ -164,41 +164,52 @@ export function processPhase3(
 
       while (remaining > 0) {
         const placeCount = Math.min(remaining, capPerStrip);
-        const placeWeight = placeCount * artikel.gewicht_kg;
 
         // Try to fit a strip on an existing WT
+        // Two-pass: prefer WTs within soft weight limit, then allow up to hard limit
         let placed = false;
-        for (const wtState of clusterWTStates) {
-          const wtDepth = getWTDepth(wtState.wt.typ);
-          // Depth needed: artStripDepth + teiler if not first strip
-          const needsTeiler = wtState.stripCount > 0;
-          const depthNeeded = artStripDepth + (needsTeiler ? config.teiler_breite_mm : 0);
-          const remainingDepth = wtDepth - wtState.usedDepth;
+        for (const weightLimit of [config.gewicht_soft_kg, config.gewicht_hard_kg]) {
+          if (placed) break;
+          for (const wtState of clusterWTStates) {
+            const wtDepth = getWTDepth(wtState.wt.typ);
+            const needsTeiler = wtState.stripCount > 0;
+            const depthNeeded = artStripDepth + (needsTeiler ? config.teiler_breite_mm : 0);
+            const remainingDepth = wtDepth - wtState.usedDepth;
 
-          if (depthNeeded > remainingDepth) continue;
+            if (depthNeeded > remainingDepth) continue;
 
-          // Check weight limit
-          const newWeight = wtState.wt.gesamtgewicht_kg + placeWeight;
-          if (newWeight > config.gewicht_hard_kg) continue;
+            // Clamp by weight budget
+            const weightBudget = weightLimit - wtState.wt.gesamtgewicht_kg;
+            if (weightBudget <= 0) continue;
+            const maxByWeight = Math.floor(weightBudget / artikel.gewicht_kg);
+            if (maxByWeight <= 0) continue;
+            const actualPlace = Math.min(placeCount, maxByWeight);
 
-          // Place strip
-          wtState.wt.positionen.push({
-            artikelnummer: String(artikel.artikelnummer),
-            bezeichnung: artikel.bezeichnung,
-            stueckzahl: placeCount,
-            grundflaeche_mm2: artikel.grundflaeche_mm2,
-            gewicht_kg: artikel.gewicht_kg,
-            abc_klasse: artikel.abc_klasse,
-          });
-          wtState.usedDepth += depthNeeded;
-          wtState.stripCount++;
-          updateWTMetrics(wtState, config);
-          remaining -= placeCount;
-          placed = true;
-          break;
+            // Place strip
+            wtState.wt.positionen.push({
+              artikelnummer: String(artikel.artikelnummer),
+              bezeichnung: artikel.bezeichnung,
+              stueckzahl: actualPlace,
+              grundflaeche_mm2: artikel.grundflaeche_mm2,
+              gewicht_kg: artikel.gewicht_kg,
+              abc_klasse: artikel.abc_klasse,
+            });
+            wtState.usedDepth += depthNeeded;
+            wtState.stripCount++;
+            updateWTMetrics(wtState, config);
+            remaining -= actualPlace;
+            placed = true;
+            break;
+          }
         }
 
         if (!placed) {
+          // Clamp by weight on fresh WT
+          const maxByWeight = Math.floor(config.gewicht_hard_kg / artikel.gewicht_kg);
+          if (maxByWeight <= 0) break; // Single item exceeds hard limit
+
+          const actualPlace = Math.min(placeCount, maxByWeight);
+
           // Determine WT type for this article, respect inventory limits
           let typ = chooseWTTypForArticle(artikel);
           if (typ === 'KLEIN' && kleinCounter >= config.anzahl_klein) typ = 'GROSS';
@@ -213,22 +224,22 @@ export function processPhase3(
             id = `G-${String(grossCounter).padStart(4, '0')}`;
           }
           const newWT = createWT(id, typ, clusterId);
-          const wtState: WTState = { wt: newWT, usedDepth: 0, stripCount: 0 };
+          const newState: WTState = { wt: newWT, usedDepth: 0, stripCount: 0 };
 
           // Place first strip (no teiler needed)
           newWT.positionen.push({
             artikelnummer: String(artikel.artikelnummer),
             bezeichnung: artikel.bezeichnung,
-            stueckzahl: placeCount,
+            stueckzahl: actualPlace,
             grundflaeche_mm2: artikel.grundflaeche_mm2,
             gewicht_kg: artikel.gewicht_kg,
             abc_klasse: artikel.abc_klasse,
           });
-          wtState.usedDepth = artStripDepth;
-          wtState.stripCount = 1;
-          updateWTMetrics(wtState, config);
-          clusterWTStates.push(wtState);
-          remaining -= placeCount;
+          newState.usedDepth = artStripDepth;
+          newState.stripCount = 1;
+          updateWTMetrics(newState, config);
+          clusterWTStates.push(newState);
+          remaining -= actualPlace;
         }
       }
     }
