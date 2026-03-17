@@ -119,6 +119,13 @@ function ConfigPanel() {
             className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
           <span className="text-xs text-gray-400">Anzahl WTs auf die A-Artikel verteilt werden</span>
         </label>
+        <label className="block">
+          <span className="text-sm text-gray-600">Lagerfläche (m²)</span>
+          <input type="number" step="0.01" value={config.warehouse_area_m2 ?? 1480.65}
+            onChange={(e) => update({ warehouse_area_m2: +e.target.value })}
+            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
+          <span className="text-xs text-gray-400">STOROJET Rack-Gesamtfläche</span>
+        </label>
         <div className="col-span-2 md:col-span-3">
           <span className="text-gray-600 text-sm">Teiler-Modus</span>
           <div className="flex items-center gap-4 mt-1">
