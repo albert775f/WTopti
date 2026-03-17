@@ -1,16 +1,16 @@
 // ============ INPUT TYPES ============
 
-/** Artikelliste.xlsx – Sheet "Verpackungsvolumen Atrikel"
- *  Excel-Spalten: Nummer, Bezeichnung, Höhe, Breite, Länge, Gewicht in kg,
- *                 Anmerkungen, Column8, Volumen in Liter, Sperrgut, Max Packmenge Sperrgut */
+/** Artikelliste – from backend API (dimensions already in mm, pre-computed fields) */
 export interface ArtikelData {
   artikelnummer: string;
   bezeichnung: string;
-  hoehe: number;       // mm
-  breite: number;      // mm
-  laenge: number;      // mm
+  hoehe_mm: number;       // mm (converted from cm by backend)
+  breite_mm: number;      // mm
+  laenge_mm: number;      // mm
   gewicht_kg: number;
-  volumen_l?: number;  // optional, berechenbar
+  volumen_l?: number;
+  grundflaeche_mm2: number;   // breite_mm × laenge_mm (pre-computed by backend)
+  max_stapelhoehe: number;    // floor(320 / hoehe_mm) (pre-computed by backend)
 }
 
 /** Bestellungen Sauber.xlsx – Sheet "Bestellungen"
@@ -21,15 +21,6 @@ export interface BestellungData {
   artikelnummer: string;
   menge: number;
   belegnummer: string;
-}
-
-/** Artikelumsatz.xlsx – Sheet "Artikelumsatz"
- *  Excel-Spalten: Nummer, Artikel, Artikelmenge
- *  HINWEIS: Die reale Datei enthält nur eine aggregierte Gesamtmenge,
- *  keine 14 Monatsspalten. umsatz[] wird ggf. mit einem Wert befüllt. */
-export interface UmsatzData {
-  artikelnummer: string;
-  umsatz: number[];  // 14 Monatswerte [M01...M14] oder [Gesamt] falls nur 1 Spalte
 }
 
 /** Bestandsliste 13.03.2026.xls – Sheet "2026-03-13"
@@ -44,13 +35,12 @@ export interface BestandData {
 // ============ PROCESSED TYPES ============
 
 export interface ArtikelProcessed extends ArtikelData {
-  grundflaeche_mm2: number;       // breite × laenge
-  max_stapelhoehe: number;        // floor(320 / hoehe)
-  umsatz_gesamt: number;          // Summe 14 Monate
+  // grundflaeche_mm2 and max_stapelhoehe inherited from ArtikelData
+  umsatz_gesamt: number;          // SUM(menge) from Bestellungen
   abc_klasse: 'A' | 'B' | 'C';
   bestand: number;
   in_abwicklung: number;
-  platzbedarf_mm2: number;        // bestand × grundflaeche
+  platzbedarf_mm2: number;        // bestand × grundflaeche_mm2
   cluster_id?: number;
   warnungen: string[];
 }
@@ -64,9 +54,10 @@ export interface WTConfig {
   gewicht_soft_kg: number;        // default: 20
   hoehe_limit_mm: number;         // default: 320
   teiler_breite_mm: number;       // default: 5
-  teiler_verlust_prozent: number; // default: 2 (alternative zu exakter Berechnung)
-  teiler_modus: 'exact' | 'percent'; // Berechnungsmodus
+  teiler_verlust_prozent: number; // default: 2 (legacy, not used by strip model)
+  teiler_modus: 'exact' | 'percent'; // legacy, strip model uses teiler_breite_mm
   co_occurrence_schwellwert: number; // default: 3
+  a_artikel_scatter_n: number;    // default: 3 — split A-articles across n WTs
 }
 
 // ============ WT + OUTPUT TYPES ============
