@@ -131,7 +131,7 @@ export function processPhase3(
   // Apply A-Artikel scattering before packing
   const scattered = scatterAArtikel(processed, config);
 
-  const allWTs: WT[] = [];
+  const allWTStates: WTState[] = [];
   let kleinCounter = 0;
   let grossCounter = 0;
 
@@ -193,6 +193,7 @@ export function processPhase3(
               grundflaeche_mm2: artikel.grundflaeche_mm2,
               gewicht_kg: artikel.gewicht_kg,
               abc_klasse: artikel.abc_klasse,
+              breite_mm: artikel.breite_mm,
             });
             wtState.usedDepth += depthNeeded;
             wtState.stripCount++;
@@ -234,6 +235,7 @@ export function processPhase3(
             grundflaeche_mm2: artikel.grundflaeche_mm2,
             gewicht_kg: artikel.gewicht_kg,
             abc_klasse: artikel.abc_klasse,
+            breite_mm: artikel.breite_mm,
           });
           newState.usedDepth = artStripDepth;
           newState.stripCount = 1;
@@ -244,11 +246,16 @@ export function processPhase3(
       }
     }
 
-    allWTs.push(...clusterWTStates.map(s => s.wt));
+    allWTStates.push(...clusterWTStates);
   }
 
+  // Build lookup for fast WTState access by WT id
+  const stateMap = new Map<string, WTState>();
+  for (const s of allWTStates) stateMap.set(s.wt.id, s);
+
   // Weight balancing: try to move lightest position from overweight WTs
-  for (const wt of allWTs) {
+  for (const srcState of allWTStates) {
+    const wt = srcState.wt;
     if (wt.gesamtgewicht_kg <= config.gewicht_soft_kg) continue;
     if (wt.positionen.length <= 1) continue;
 
@@ -257,24 +264,41 @@ export function processPhase3(
       (a, b) => a.gewicht_kg * a.stueckzahl - b.gewicht_kg * b.stueckzahl,
     );
     const lightest = sorted[0];
+    const artBreite = lightest.breite_mm ?? 0;
 
     // Find another WT in same cluster that can take it
-    const sameCluster = allWTs.filter(
-      w => w.cluster_id === wt.cluster_id && w.id !== wt.id,
+    const sameCluster = allWTStates.filter(
+      s => s.wt.cluster_id === wt.cluster_id && s.wt.id !== wt.id,
     );
-    for (const target of sameCluster) {
-      const targetWeight = target.gesamtgewicht_kg + lightest.gewicht_kg * lightest.stueckzahl;
+    for (const tgtState of sameCluster) {
+      const targetWeight = tgtState.wt.gesamtgewicht_kg + lightest.gewicht_kg * lightest.stueckzahl;
       if (targetWeight <= config.gewicht_hard_kg) {
+        // Check depth capacity on target
+        const tgtDepth = getWTDepth(tgtState.wt.typ);
+        const needsTeiler = tgtState.stripCount > 0;
+        const depthNeeded = artBreite + (needsTeiler ? config.teiler_breite_mm : 0);
+        if (depthNeeded > tgtDepth - tgtState.usedDepth) continue;
+
         const idx = wt.positionen.indexOf(lightest);
         if (idx >= 0) {
           wt.positionen.splice(idx, 1);
-          target.positionen.push(lightest);
-          // Re-derive metrics (simplified — strip tracking lost after move, but metrics are still correct)
+          tgtState.wt.positionen.push(lightest);
+
+          // Update source WTState
+          const srcTeiler = srcState.stripCount > 1 ? config.teiler_breite_mm : 0;
+          srcState.usedDepth = Math.max(0, srcState.usedDepth - artBreite - srcTeiler);
+          srcState.stripCount = Math.max(0, srcState.stripCount - 1);
+          updateWTMetrics(srcState, config);
+
+          // Update target WTState
+          tgtState.usedDepth += depthNeeded;
+          tgtState.stripCount++;
+          updateWTMetrics(tgtState, config);
           break;
         }
       }
     }
   }
 
-  return allWTs;
+  return allWTStates.map(s => s.wt);
 }
