@@ -51,8 +51,11 @@ function updateWTMetrics(wtState: WTState, config: WTConfig): void {
   wt.anzahl_teiler = teilerCount;
   wt.flaeche_brutto_mm2 = WT_WIDTH * wtDepth;
   wt.flaeche_netto_mm2 = WT_WIDTH * usableDepth;
+  // usedDepth includes teiler mm; subtract them so numerator and denominator
+  // are both in "pure strip" space — prevents >100% on physically fitting WTs
+  const pureStripDepth = wtState.usedDepth - teilerLoss;
   wt.flaeche_netto_pct = usableDepth > 0
-    ? Math.round((wtState.usedDepth / usableDepth) * 10000) / 100
+    ? Math.round((pureStripDepth / usableDepth) * 10000) / 100
     : 0;
 
   wt.gesamtgewicht_kg = Math.round(
