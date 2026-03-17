@@ -44,38 +44,57 @@ export default function WTVisualization() {
   const realDepth = isKlein ? 500 : 800;
   const svgW = 250;
   const svgH = isKlein ? 250 : 400;
-  // Both KLEIN (500×500) and GROSS (500×800) map to svgW×svgH at scale 0.5
   const scale = svgW / 500;
 
-  // Strip-aware layout: each position occupies strips along the depth axis
+  // 2D zone layout: shelf-based packing
   const layoutRects = useMemo(() => {
     if (!wt) return [];
+    const DIVIDER = 5; // mm
+    const WT_W = 500;  // mm
+
+    // Sort positions by zone area descending (largest zones first)
+    const sorted = [...wt.positionen].sort((a, b) => {
+      const aMaxStapel = Math.max(1, a.max_stapelhoehe ?? 1);
+      const bMaxStapel = Math.max(1, b.max_stapelhoehe ?? 1);
+      const aStacks = Math.ceil(a.stueckzahl / aMaxStapel);
+      const bStacks = Math.ceil(b.stueckzahl / bMaxStapel);
+      const aL = a.laenge_mm ?? Math.sqrt(a.grundflaeche_mm2);
+      const bL = b.laenge_mm ?? Math.sqrt(b.grundflaeche_mm2);
+      const aB = a.breite_mm ?? Math.sqrt(a.grundflaeche_mm2);
+      const bB = b.breite_mm ?? Math.sqrt(b.grundflaeche_mm2);
+      return (bStacks * bL * bB) - (aStacks * aL * aB);
+    });
+
     const rects: { x: number; y: number; w: number; h: number; pos: WTPosition }[] = [];
-    let curY = 0;
+    let curX = 0, curY = 0, shelfH = 0;
 
-    for (let i = 0; i < wt.positionen.length; i++) {
-      const pos = wt.positionen[i];
-
-      // Use stored dimensions; fall back to sqrt approximation for legacy data
+    for (const pos of sorted) {
       const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
+      const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
 
-      const slotsAcross = Math.max(1, Math.floor(500 / laenge));
-      const capPerStrip = slotsAcross * maxStapel;
-      const stripsNeeded = Math.max(1, Math.ceil(pos.stueckzahl / capPerStrip));
+      // Arrange stacks in a shelf: as many as fit across the WT width
+      const maxAcross = Math.max(1, Math.floor(WT_W / laenge));
+      const actualAcross = Math.min(stacksNeeded, maxAcross);
+      const stackRows = Math.ceil(stacksNeeded / actualAcross);
+      const zoneW = actualAcross * laenge;
+      const zoneH = stackRows * breite;
 
-      // Teiler gap before each new article type (not before the first)
-      if (i > 0) curY += 5;
+      // If zone doesn't fit in current shelf, start a new shelf
+      if (curX > 0 && curX + DIVIDER + zoneW > WT_W) {
+        curY += shelfH + DIVIDER;
+        curX = 0;
+        shelfH = 0;
+      }
 
-      const rectW = Math.min(slotsAcross * laenge, 500);
-      const rectH = stripsNeeded * breite;
+      rects.push({ x: curX, y: curY, w: zoneW, h: zoneH, pos });
+      curX += zoneW + DIVIDER;
+      shelfH = Math.max(shelfH, zoneH);
 
-      rects.push({ x: 0, y: curY, w: rectW, h: rectH, pos });
-      curY += rectH;
-
-      if (curY >= realDepth) break; // safety stop
+      if (curY + zoneH >= realDepth) break;
     }
+
     return rects;
   }, [wt, realDepth]);
 
@@ -101,14 +120,14 @@ export default function WTVisualization() {
       <div className="flex items-center gap-4 bg-white border border-gray-200 rounded-lg p-3">
         <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))}
           disabled={currentIndex === 0}
-          className="px-3 py-1 rounded border border-gray-300 disabled:opacity-40">←</button>
+          className="px-3 py-1 rounded border border-gray-300 disabled:opacity-40">&#8592;</button>
         <span className="text-sm font-mono">
           WT {currentIndex + 1} / {wts.length}
           {wt && <span className="ml-2 text-gray-500">({wt.id})</span>}
         </span>
         <button onClick={() => setCurrentIndex(Math.min(wts.length - 1, currentIndex + 1))}
           disabled={currentIndex >= wts.length - 1}
-          className="px-3 py-1 rounded border border-gray-300 disabled:opacity-40">→</button>
+          className="px-3 py-1 rounded border border-gray-300 disabled:opacity-40">&#8594;</button>
 
         <div className="ml-auto flex items-center gap-2">
           <select value={colorMode} onChange={(e) => setColorMode(e.target.value as ColorMode)}
@@ -147,11 +166,21 @@ export default function WTVisualization() {
                 onMouseLeave={() => setTooltip(null)}
               />
             ))}
-            {/* Teiler lines at actual positions between article strips */}
-            {layoutRects.slice(1).map((r, i) => {
-              const teilerY = (r.y - 2.5) * scale;
-              return <line key={`t-${i}`} x1={0} y1={teilerY} x2={svgW} y2={teilerY}
-                stroke="#94a3b8" strokeWidth={1} strokeDasharray="4,2" />;
+            {/* Zone dividers: vertical within shelves, horizontal between shelves */}
+            {layoutRects.map((r, i) => {
+              const next = layoutRects[i + 1];
+              if (!next) return null;
+              const sameShelves = Math.abs(r.y - next.y) < 1;
+              if (!sameShelves) {
+                // Horizontal divider between shelves
+                const lineY = (r.y + r.h + 2.5) * scale;
+                return <line key={`d-${i}`} x1={0} y1={lineY} x2={svgW} y2={lineY}
+                  stroke="#94a3b8" strokeWidth={0.5} strokeDasharray="3,2" />;
+              }
+              // Vertical divider between zones in same shelf
+              const lineX = (r.x + r.w + 2.5) * scale;
+              return <line key={`d-${i}`} x1={lineX} y1={r.y * scale} x2={lineX} y2={(r.y + r.h) * scale}
+                stroke="#94a3b8" strokeWidth={0.5} strokeDasharray="3,2" />;
             })}
           </svg>
 
@@ -172,8 +201,8 @@ export default function WTVisualization() {
             <div className="fixed bg-gray-900 text-white text-xs px-3 py-2 rounded pointer-events-none z-50"
               style={{ left: tooltip.x + 10, top: tooltip.y - 40 }}>
               <p className="font-semibold">{tooltip.pos.bezeichnung}</p>
-              <p>{tooltip.pos.artikelnummer} | {tooltip.pos.breite_mm ?? '?'}×{tooltip.pos.laenge_mm ?? '?'} mm</p>
-              <p>{tooltip.pos.gewicht_kg.toFixed(2)} kg | {tooltip.pos.stueckzahl} Stk | {tooltip.pos.abc_klasse}</p>
+              <p>{tooltip.pos.artikelnummer} | {tooltip.pos.laenge_mm ?? '?'}x{tooltip.pos.breite_mm ?? '?'} mm</p>
+              <p>{tooltip.pos.gewicht_kg.toFixed(2)} kg | {tooltip.pos.stueckzahl} Stk | h&le;{Math.max(1, tooltip.pos.max_stapelhoehe ?? 1)}x</p>
             </div>
           )}
         </div>
