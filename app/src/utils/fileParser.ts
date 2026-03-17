@@ -1,15 +1,16 @@
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import type { ArtikelData, BestellungData, UmsatzData, BestandData } from '../types';
+import type { BestandData } from '../types';
 import {
-  ARTIKELLISTE_MAPPING,
-  BESTELLUNGEN_MAPPING,
-  UMSATZ_MAPPING,
   BESTAND_MAPPING,
   EXPECTED_SHEETS,
   mapAndParseRows,
 } from './csvMapping';
 
+/**
+ * Parse any CSV or Excel file into raw rows.
+ * Used only for Bestandsliste uploads (Artikelliste + Bestellungen come from API).
+ */
 export async function parseFile(file: File): Promise<Record<string, unknown>[]> {
   const name = file.name.toLowerCase();
   if (name.endsWith('.csv')) {
@@ -33,13 +34,10 @@ async function parseExcel(file: File): Promise<Record<string, unknown>[]> {
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: 'array' });
 
-  // Try to find a matching sheet name
+  // Try to find a matching sheet name (date-pattern for Bestandsliste)
   let sheetName = wb.SheetNames[0];
   for (const sn of wb.SheetNames) {
-    if (sn === EXPECTED_SHEETS.artikelliste ||
-        sn === EXPECTED_SHEETS.bestellungen ||
-        sn === EXPECTED_SHEETS.artikelumsatz ||
-        EXPECTED_SHEETS.bestandsliste.test(sn)) {
+    if (EXPECTED_SHEETS.bestandsliste.test(sn)) {
       sheetName = sn;
       break;
     }
@@ -49,56 +47,32 @@ async function parseExcel(file: File): Promise<Record<string, unknown>[]> {
   return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
 }
 
-export function mapArtikel(rows: Record<string, unknown>[]): ArtikelData[] {
-  return mapAndParseRows<ArtikelData>(
-    rows,
-    ARTIKELLISTE_MAPPING,
-    ['hoehe', 'breite', 'laenge', 'gewicht_kg', 'volumen_l'],
-  );
-}
-
-export function mapBestellungen(rows: Record<string, unknown>[]): BestellungData[] {
-  return mapAndParseRows<BestellungData>(
-    rows,
-    BESTELLUNGEN_MAPPING,
-    ['menge'],
-  );
-}
-
-export function mapUmsatz(rows: Record<string, unknown>[]): UmsatzData[] {
-  const mapped = mapAndParseRows<Record<string, unknown>>(
-    rows,
-    UMSATZ_MAPPING,
-    ['artikelmenge'],
-  );
-  return mapped.map((row) => ({
-    artikelnummer: String(row.artikelnummer),
-    umsatz: [Number(row.artikelmenge) || 0],
-  }));
-}
-
+/**
+ * Map raw Bestandsliste rows to BestandData[].
+ * Handles gesamt_x as string with spaces (e.g. "1 234" → 1234).
+ * Filters out rows with bestand ≤ 0.
+ */
 export function mapBestand(rows: Record<string, unknown>[]): BestandData[] {
   const raw = mapAndParseRows<Record<string, unknown>>(
     rows,
     BESTAND_MAPPING,
     [],
   );
-  return raw.map((row) => {
-    const val = row.bestand;
-    const bestand = typeof val === 'string'
-      ? parseInt(val.replace(/\s/g, ''), 10) || 0
-      : Number(val) || 0;
-    return {
-      artikelnummer: String(row.artikelnummer),
-      bestand,
-    };
-  });
+  return raw
+    .map((row) => {
+      const val = row.bestand;
+      const bestand = typeof val === 'string'
+        ? parseInt(val.replace(/\s/g, ''), 10) || 0
+        : Number(val) || 0;
+      return {
+        artikelnummer: String(row.artikelnummer),
+        bestand,
+      };
+    })
+    .filter((b) => b.bestand > 0);
 }
 
 const REQUIRED_FIELDS: Record<string, string[]> = {
-  artikel: ['Nummer', 'Bezeichnung', 'Höhe', 'Breite', 'Länge', 'Gewicht in kg'],
-  bestellungen: ['Nummer', 'Menge', 'Beleg-Nr.'],
-  umsatz: ['Nummer', 'Artikelmenge'],
   bestand: ['nummer', 'gesamt_x'],
 };
 
