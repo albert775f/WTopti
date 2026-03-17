@@ -1,142 +1,98 @@
-import type { ArtikelProcessed, WTConfig, WT, WTTyp } from '../types';
+import type { ArtikelProcessed, WTConfig, WT, WTTyp, WTPosition } from '../types';
 import type { ClusterResult } from './phase2';
 
 // WT dimensions in mm
-const WT_WIDTH = 500;  // both KLEIN and GROSS are 500mm wide
+const WT_WIDTH = 500;
 const WT_DEPTH_KLEIN = 500;
 const WT_DEPTH_GROSS = 800;
 
-function getWTDepth(typ: WTTyp): number {
-  return typ === 'KLEIN' ? WT_DEPTH_KLEIN : WT_DEPTH_GROSS;
-}
+// Area constants
+export const KLEIN_AREA = WT_WIDTH * WT_DEPTH_KLEIN;   // 250,000 mm²
+export const GROSS_AREA = WT_WIDTH * WT_DEPTH_GROSS;   // 400,000 mm²
+export const KLEIN_FLOOR_M2 = 0.25;
+export const GROSS_FLOOR_M2 = 0.40;
+export const AREA_USABLE_FRACTION = 0.92;  // ~8% for custom-cut dividers
 
-export interface WTTypePreference {
-  artikelnummer: string;
-  nKlein: number;        // KLEIN WTs needed for this article's full stock
-  nGross: number;        // GROSS WTs needed
-  mustGross: boolean;    // breite_mm > WT_DEPTH_KLEIN — doesn't fit KLEIN
-  efficiency: number;    // (nKlein - nGross) / nGross — KLEIN saved per GROSS used
+function getWTArea(typ: WTTyp): number {
+  return typ === 'KLEIN' ? KLEIN_AREA : GROSS_AREA;
 }
 
 /**
- * Pre-plan which articles should go on GROSS WTs based on depth-efficiency.
- * Articles that benefit from GROSS depth (geometry-limited, not weight-limited)
- * are ranked by efficiency and greedily assigned to GROSS until budget exhausted.
+ * How many items of this article fit on a WT with given area?
+ * Geometric capacity: floor(WT_area × 0.92 / (l × b)) stacks × max_stapelhoehe items/stack
+ * Weight capacity: floor(maxWeightKg / gewicht_kg)
  */
-export function planWTTypes(
-  processed: ArtikelProcessed[],
-  config: WTConfig,
-): { plan: Map<string, WTTyp>; preferences: WTTypePreference[]; grossBudgetUsed: number } {
-  const preferences: WTTypePreference[] = [];
+export function itemsPerWT2D(artikel: ArtikelProcessed, wtArea: number, maxWeightKg: number): number {
+  const maxStapel = Math.max(1, artikel.max_stapelhoehe);
+  const footprint = artikel.laenge_mm * artikel.breite_mm;
+  const maxStacksGeom = Math.floor((wtArea * AREA_USABLE_FRACTION) / footprint);
+  const itemsGeom = maxStacksGeom * maxStapel;
+  const itemsWeight = artikel.gewicht_kg > 0 ? Math.floor(maxWeightKg / artikel.gewicht_kg) : 999999;
+  return Math.max(1, Math.min(itemsGeom, itemsWeight));
+}
 
-  for (const art of processed) {
-    if (art.bestand <= 0) continue;
-    if (art.hoehe_mm > config.hoehe_limit_mm) continue;
-    if (art.grundflaeche_mm2 <= 0) continue;
-    if (art.laenge_mm > WT_WIDTH) continue;         // not placeable on any WT
-    if (art.breite_mm > WT_DEPTH_GROSS) continue;   // not placeable on any WT
+/**
+ * Zone footprint for a position (mm²)
+ * stacks_needed × laenge × breite
+ */
+function zoneFootprintPos(pos: WTPosition): number {
+  const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
+  const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
+  const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
+  const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
+  return stacksNeeded * laenge * breite;
+}
 
-    const capPerStrip = Math.floor(WT_WIDTH / art.laenge_mm) * Math.max(1, art.max_stapelhoehe);
-    if (capPerStrip <= 0) continue;
+/**
+ * Zone footprint for N items of an article (mm²)
+ */
+export function zoneFootprint(artikel: ArtikelProcessed, stueckzahl: number): number {
+  const maxStapel = Math.max(1, artikel.max_stapelhoehe);
+  const stacksNeeded = Math.ceil(stueckzahl / maxStapel);
+  return stacksNeeded * artikel.laenge_mm * artikel.breite_mm;
+}
 
-    // Strip model: no teilers between same-article strips
-    const stripsKlein = Math.floor(WT_DEPTH_KLEIN / art.breite_mm);
-    const stripsGross = Math.floor(WT_DEPTH_GROSS / art.breite_mm);
-    const weightCap = art.gewicht_kg > 0 ? Math.floor(config.gewicht_hard_kg / art.gewicht_kg) : 999999;
-
-    const fitsKlein = art.breite_mm <= WT_DEPTH_KLEIN;
-    const mustGross = !fitsKlein;
-
-    const itemsPerKlein = fitsKlein ? Math.min(stripsKlein * capPerStrip, weightCap) : 0;
-    const itemsPerGross = Math.min(stripsGross * capPerStrip, weightCap);
-
-    const nKlein = fitsKlein ? Math.ceil(art.bestand / Math.max(1, itemsPerKlein)) : 999999;
-    const nGross = Math.ceil(art.bestand / Math.max(1, itemsPerGross));
-    const efficiency = nKlein > nGross ? (nKlein - nGross) / Math.max(1, nGross) : 0;
-
-    preferences.push({
-      artikelnummer: String(art.artikelnummer),
-      nKlein,
-      nGross,
-      mustGross,
-      efficiency,
-    });
-  }
-
-  const plan = new Map<string, WTTyp>();
-  let grossBudget = config.anzahl_gross;
-  let grossBudgetUsed = 0;
-
-  // Must-GROSS first (physically don't fit KLEIN)
-  for (const p of preferences.filter(p => p.mustGross)) {
-    plan.set(p.artikelnummer, 'GROSS');
-    grossBudget -= p.nGross;
-    grossBudgetUsed += p.nGross;
-  }
-
-  // Efficiency-ranked candidates: articles that save KLEIN WTs by going to GROSS
-  const candidates = preferences
-    .filter(p => !p.mustGross && p.nGross < p.nKlein)
-    .sort((a, b) => b.efficiency - a.efficiency);
-
-  for (const p of candidates) {
-    if (grossBudget >= p.nGross) {
-      plan.set(p.artikelnummer, 'GROSS');
-      grossBudget -= p.nGross;
-      grossBudgetUsed += p.nGross;
-    } else {
-      plan.set(p.artikelnummer, 'KLEIN');
-    }
-  }
-
-  // Default: KLEIN for remaining articles
-  for (const p of preferences) {
-    if (!plan.has(p.artikelnummer)) {
-      plan.set(p.artikelnummer, 'KLEIN');
-    }
-  }
-
-  return { plan, preferences, grossBudgetUsed };
+/**
+ * Max additional items that fit in remaining area, given existingStu already on WT.
+ * Accounts for stack reuse: adding items to partially-filled stacks takes no extra area.
+ */
+function maxAdditionalByArea(artikel: ArtikelProcessed, existingStu: number, remainingArea: number): number {
+  const maxStapel = Math.max(1, artikel.max_stapelhoehe);
+  const footprint = artikel.laenge_mm * artikel.breite_mm;
+  const currentZoneArea = Math.ceil(existingStu / maxStapel) * footprint;
+  const maxTotalStacks = Math.floor((remainingArea + currentZoneArea) / footprint);
+  return Math.max(0, maxTotalStacks * maxStapel - existingStu);
 }
 
 function createWT(id: string, typ: WTTyp, clusterId: number): WT {
-  const brutto = typ === 'KLEIN' ? 250_000 : 400_000;
+  const area = getWTArea(typ);
   return {
-    id,
-    typ,
-    positionen: [],
-    cluster_id: clusterId,
+    id, typ, positionen: [], cluster_id: clusterId,
     gesamtgewicht_kg: 0,
-    flaeche_brutto_mm2: brutto,
-    flaeche_netto_mm2: brutto,
+    flaeche_brutto_mm2: area,
+    flaeche_netto_mm2: Math.round(area * AREA_USABLE_FRACTION),
     flaeche_netto_pct: 0,
     anzahl_teiler: 0,
     gewicht_status: 'ok',
   };
 }
 
-/** Track strip-based depth usage per WT */
 interface WTState {
   wt: WT;
-  usedDepth: number;  // mm of depth consumed by strips
-  stripCount: number; // number of strips placed (for teiler counting)
+  usedArea: number;     // mm² consumed by zones (recalculated after each placement)
+  usableArea: number;   // WT_area × AREA_USABLE_FRACTION (fixed per WT)
 }
 
 function updateWTMetrics(wtState: WTState, config: WTConfig): void {
   const wt = wtState.wt;
-  const wtDepth = getWTDepth(wt.typ);
-  const teilerCount = Math.max(0, wtState.stripCount - 1);
-  const teilerLoss = teilerCount * config.teiler_breite_mm;
-  const usableDepth = Math.max(0, wtDepth - teilerLoss);
 
-  wt.anzahl_teiler = teilerCount;
-  wt.flaeche_brutto_mm2 = WT_WIDTH * wtDepth;
-  wt.flaeche_netto_mm2 = WT_WIDTH * usableDepth;
-  // usedDepth includes teiler mm; subtract them so numerator and denominator
-  // are both in "pure strip" space — prevents >100% on physically fitting WTs
-  const pureStripDepth = wtState.usedDepth - teilerLoss;
-  wt.flaeche_netto_pct = usableDepth > 0
-    ? Math.round((pureStripDepth / usableDepth) * 10000) / 100
+  // Recalculate used area from positions
+  const usedArea = wt.positionen.reduce((sum, pos) => sum + zoneFootprintPos(pos), 0);
+  wtState.usedArea = usedArea;
+
+  wt.anzahl_teiler = Math.max(0, wt.positionen.length - 1);
+  wt.flaeche_netto_pct = wtState.usableArea > 0
+    ? Math.round((usedArea / wtState.usableArea) * 10000) / 100
     : 0;
 
   wt.gesamtgewicht_kg = Math.round(
@@ -153,57 +109,120 @@ function updateWTMetrics(wtState: WTState, config: WTConfig): void {
 }
 
 /**
- * Compute how many items of this article fit in one strip on the WT.
- * Strip depth = article.breite_mm (+ teiler_breite_mm between strips)
- * Items across = floor(WT_WIDTH / article.laenge_mm)
- * Items high = article.max_stapelhoehe
+ * WTTypePreference — floor-cost-based WT type selection.
+ * For each article, compare floor space (m²) needed on KLEIN vs GROSS.
+ * Choose the type that uses less warehouse floor area.
  */
-function stripCapacity(artikel: ArtikelProcessed): number {
-  const slotsAcross = Math.floor(WT_WIDTH / artikel.laenge_mm);
-  const slotsHigh = artikel.max_stapelhoehe > 0 ? artikel.max_stapelhoehe : 1;
-  return slotsAcross * slotsHigh;
+export interface WTTypePreference {
+  artikelnummer: string;
+  n_klein: number;
+  n_gross: number;
+  area_cost_klein: number;  // m²
+  area_cost_gross: number;  // m²
+  best_type: WTTyp;
+  must_gross: boolean;
+  area_saving: number;      // area_cost_klein - area_cost_gross (positive = GROSS saves m²)
 }
 
 /**
- * Depth needed for one strip of this article type.
- * The teiler is added BETWEEN strips, not after the last one.
+ * Pre-plan WT types using floor-area cost minimization.
+ * Weight-limited articles: same capacity on both types → KLEIN is cheaper (0.25 < 0.40 m²)
+ * Geometry-limited articles: GROSS depth holds more → may save floor space despite larger footprint
  */
-function stripDepth(artikel: ArtikelProcessed): number {
-  return artikel.breite_mm;
-}
-
-/**
- * A-Artikel Scattering: split high-stock A-articles into multiple virtual entries
- * so they get placed on separate WTs, preventing hotspots.
- */
-function scatterAArtikel(
+export function planWTTypes(
   processed: ArtikelProcessed[],
   config: WTConfig,
-): ArtikelProcessed[] {
-  const n = config.a_artikel_scatter_n;
-  if (n <= 1) return processed;
-
-  const result: ArtikelProcessed[] = [];
+): { plan: Map<string, WTTyp>; preferences: WTTypePreference[]; grossBudgetUsed: number } {
+  const preferences: WTTypePreference[] = [];
 
   for (const art of processed) {
+    if (art.bestand <= 0) continue;
+    if (art.hoehe_mm > config.hoehe_limit_mm) continue;
+    if (art.grundflaeche_mm2 <= 0) continue;
+    if (art.laenge_mm > WT_WIDTH) continue;
+    if (art.breite_mm > WT_DEPTH_GROSS) continue;
+
+    const fitsKlein = art.breite_mm <= WT_DEPTH_KLEIN && art.laenge_mm <= WT_WIDTH;
+    const mustGross = !fitsKlein;
+
+    const itemsKlein = fitsKlein ? itemsPerWT2D(art, KLEIN_AREA, config.gewicht_hard_kg) : 0;
+    const itemsGross = itemsPerWT2D(art, GROSS_AREA, config.gewicht_hard_kg);
+
+    const nKlein = fitsKlein ? Math.ceil(art.bestand / Math.max(1, itemsKlein)) : 999999;
+    const nGross = Math.ceil(art.bestand / Math.max(1, itemsGross));
+
+    const areaCostKlein = fitsKlein ? nKlein * KLEIN_FLOOR_M2 : 999999;
+    const areaCostGross = nGross * GROSS_FLOOR_M2;
+
+    const bestType: WTTyp = (!fitsKlein || areaCostGross < areaCostKlein) ? 'GROSS' : 'KLEIN';
+    const areaSaving = areaCostKlein - areaCostGross;
+
+    preferences.push({
+      artikelnummer: String(art.artikelnummer),
+      n_klein: nKlein === 999999 ? 0 : nKlein,
+      n_gross: nGross,
+      area_cost_klein: fitsKlein ? areaCostKlein : 0,
+      area_cost_gross: areaCostGross,
+      best_type: bestType,
+      must_gross: mustGross,
+      area_saving: areaSaving,
+    });
+  }
+
+  const plan = new Map<string, WTTyp>();
+  let grossBudget = config.anzahl_gross;
+  let grossBudgetUsed = 0;
+
+  // Must-GROSS first (physically don't fit KLEIN)
+  for (const p of preferences.filter(p => p.must_gross)) {
+    plan.set(p.artikelnummer, 'GROSS');
+    grossBudget -= p.n_gross;
+    grossBudgetUsed += p.n_gross;
+  }
+
+  // Floor-cost optimal: articles where GROSS saves floor space, sorted by saving desc
+  const candidates = preferences
+    .filter(p => !p.must_gross && p.best_type === 'GROSS')
+    .sort((a, b) => b.area_saving - a.area_saving);
+
+  for (const p of candidates) {
+    if (grossBudget >= p.n_gross) {
+      plan.set(p.artikelnummer, 'GROSS');
+      grossBudget -= p.n_gross;
+      grossBudgetUsed += p.n_gross;
+    } else {
+      plan.set(p.artikelnummer, 'KLEIN');
+    }
+  }
+
+  // Default: KLEIN
+  for (const p of preferences) {
+    if (!plan.has(p.artikelnummer)) {
+      plan.set(p.artikelnummer, 'KLEIN');
+    }
+  }
+
+  return { plan, preferences, grossBudgetUsed };
+}
+
+/** A-Artikel Scattering — unchanged from previous version */
+function scatterAArtikel(processed: ArtikelProcessed[], config: WTConfig): ArtikelProcessed[] {
+  const n = config.a_artikel_scatter_n;
+  if (n <= 1) return processed;
+  const result: ArtikelProcessed[] = [];
+  for (const art of processed) {
     if (art.abc_klasse === 'A' && art.bestand > n) {
-      // Split into n virtual entries
       const chunkSize = Math.ceil(art.bestand / n);
       let remaining = art.bestand;
       for (let i = 0; i < n && remaining > 0; i++) {
         const chunk = Math.min(chunkSize, remaining);
-        result.push({
-          ...art,
-          bestand: chunk,
-          platzbedarf_mm2: chunk * art.grundflaeche_mm2,
-        });
+        result.push({ ...art, bestand: chunk, platzbedarf_mm2: chunk * art.grundflaeche_mm2 });
         remaining -= chunk;
       }
     } else {
       result.push(art);
     }
   }
-
   return result;
 }
 
@@ -212,7 +231,7 @@ export function processPhase3(
   _clusters: ClusterResult,
   config: WTConfig,
 ): WT[] {
-  // Pre-plan WT types: efficiency-based allocation (geometry-limited → GROSS)
+  // Pre-plan WT types using floor-area cost minimization
   const { plan: wtTypePlan } = planWTTypes(processed, config);
 
   // Apply A-Artikel scattering before packing
@@ -231,61 +250,56 @@ export function processPhase3(
   }
 
   for (const [clusterId, articles] of clusterGroups) {
-    // Sort by grundflaeche descending (First Fit Decreasing)
+    // Sort by zone footprint descending (First Fit Decreasing)
     const sorted = [...articles].sort((a, b) => b.grundflaeche_mm2 - a.grundflaeche_mm2);
 
     const clusterWTStates: WTState[] = [];
 
     for (const artikel of sorted) {
-      // Skip non-storable articles
       if (artikel.hoehe_mm > config.hoehe_limit_mm) continue;
       if (artikel.grundflaeche_mm2 <= 0) continue;
+      if (artikel.laenge_mm > WT_WIDTH) continue;          // article too wide
+      if (artikel.breite_mm > WT_DEPTH_GROSS) continue;    // article too deep for any WT
 
       let remaining = artikel.bestand;
-      const capPerStrip = stripCapacity(artikel);
-      const artStripDepth = stripDepth(artikel);
 
-      // Skip articles that can't fit on any WT type
-      if (capPerStrip <= 0) continue;              // laenge_mm > WT_WIDTH (500mm)
-      if (artStripDepth > WT_DEPTH_GROSS) continue; // breite_mm > largest WT depth
+      // Determine WT type for this article
+      const plannedTyp: WTTyp = wtTypePlan.get(String(artikel.artikelnummer)) ?? 'KLEIN';
+      const wtAreaForArticle = plannedTyp === 'KLEIN' ? KLEIN_AREA : GROSS_AREA;
+      const maxPerWT = itemsPerWT2D(artikel, wtAreaForArticle, config.gewicht_hard_kg);
+      if (maxPerWT <= 0) continue;
 
       while (remaining > 0) {
-        const placeCount = Math.min(remaining, capPerStrip);
+        const tryPlace = Math.min(remaining, maxPerWT);
 
-        // Try to fit a strip on an existing WT
         // Two-pass: prefer WTs within soft weight limit, then allow up to hard limit
         let placed = false;
         for (const weightLimit of [config.gewicht_soft_kg, config.gewicht_hard_kg]) {
           if (placed) break;
           for (const wtState of clusterWTStates) {
-            const wtDepth = getWTDepth(wtState.wt.typ);
-
-            // Check if this article already has a position on this WT
-            const existingPos = wtState.wt.positionen.find(
-              p => p.artikelnummer === String(artikel.artikelnummer),
-            );
-            const isNewArticleType = !existingPos;
-
-            // Teiler only needed between DIFFERENT article types, not between
-            // continuation strips of the same article
-            const needsTeiler = isNewArticleType && wtState.stripCount > 0;
-            const depthNeeded = artStripDepth + (needsTeiler ? config.teiler_breite_mm : 0);
-            const remainingDepth = wtDepth - wtState.usedDepth;
-
-            if (depthNeeded > remainingDepth) continue;
-
-            // Clamp by weight budget
+            // Weight check
             const weightBudget = weightLimit - wtState.wt.gesamtgewicht_kg;
             if (weightBudget <= 0) continue;
             const maxByWeight = Math.floor(weightBudget / artikel.gewicht_kg);
             if (maxByWeight <= 0) continue;
-            const actualPlace = Math.min(placeCount, maxByWeight);
+
+            // Existing position check
+            const existingPos = wtState.wt.positionen.find(
+              p => p.artikelnummer === String(artikel.artikelnummer),
+            );
+            const existingStu = existingPos?.stueckzahl ?? 0;
+
+            // Area check
+            const remainingArea = wtState.usableArea - wtState.usedArea;
+            const maxByArea = maxAdditionalByArea(artikel, existingStu, remainingArea);
+            if (maxByArea <= 0) continue;
+
+            const actualPlace = Math.min(tryPlace, maxByWeight, maxByArea);
+            if (actualPlace <= 0) continue;
 
             if (existingPos) {
-              // Continuation strip: merge into existing position, no new teiler
               existingPos.stueckzahl += actualPlace;
             } else {
-              // New article type on this WT: push position, count new strip
               wtState.wt.positionen.push({
                 artikelnummer: String(artikel.artikelnummer),
                 bezeichnung: artikel.bezeichnung,
@@ -297,9 +311,7 @@ export function processPhase3(
                 laenge_mm: artikel.laenge_mm,
                 max_stapelhoehe: artikel.max_stapelhoehe,
               });
-              wtState.stripCount++;
             }
-            wtState.usedDepth += depthNeeded; // physical depth always consumed
             updateWTMetrics(wtState, config);
             remaining -= actualPlace;
             placed = true;
@@ -308,16 +320,20 @@ export function processPhase3(
         }
 
         if (!placed) {
-          // Clamp by weight on fresh WT
+          // Create new WT
           const maxByWeight = Math.floor(config.gewicht_hard_kg / artikel.gewicht_kg);
-          if (maxByWeight <= 0) break; // Single item exceeds hard limit
+          if (maxByWeight <= 0) break;
 
-          const actualPlace = Math.min(placeCount, maxByWeight);
-
-          // Determine WT type: use efficiency-based plan, fall back if inventory exhausted
+          // Determine WT type: use plan, fall back if inventory exhausted
           let typ: WTTyp = wtTypePlan.get(String(artikel.artikelnummer)) ?? 'KLEIN';
           if (typ === 'KLEIN' && kleinCounter >= config.anzahl_klein) typ = 'GROSS';
           if (typ === 'GROSS' && grossCounter >= config.anzahl_gross) typ = 'KLEIN';
+
+          const newWTArea = getWTArea(typ);
+          const newUsableArea = newWTArea * AREA_USABLE_FRACTION;
+          const maxByArea = maxAdditionalByArea(artikel, 0, newUsableArea);
+          const actualPlace = Math.min(tryPlace, maxByWeight, maxByArea);
+          if (actualPlace <= 0) break;
 
           let id: string;
           if (typ === 'KLEIN') {
@@ -327,10 +343,10 @@ export function processPhase3(
             grossCounter++;
             id = `G-${String(grossCounter).padStart(4, '0')}`;
           }
-          const newWT = createWT(id, typ, clusterId);
-          const newState: WTState = { wt: newWT, usedDepth: 0, stripCount: 0 };
 
-          // Place first strip (no teiler needed)
+          const newWT = createWT(id, typ, clusterId);
+          const newState: WTState = { wt: newWT, usedArea: 0, usableArea: newUsableArea };
+
           newWT.positionen.push({
             artikelnummer: String(artikel.artikelnummer),
             bezeichnung: artikel.bezeichnung,
@@ -342,8 +358,7 @@ export function processPhase3(
             laenge_mm: artikel.laenge_mm,
             max_stapelhoehe: artikel.max_stapelhoehe,
           });
-          newState.usedDepth = artStripDepth;
-          newState.stripCount = 1;
+
           updateWTMetrics(newState, config);
           clusterWTStates.push(newState);
           remaining -= actualPlace;
@@ -354,53 +369,35 @@ export function processPhase3(
     allWTStates.push(...clusterWTStates);
   }
 
-  // Build lookup for fast WTState access by WT id
-  const stateMap = new Map<string, WTState>();
-  for (const s of allWTStates) stateMap.set(s.wt.id, s);
-
-  // Weight balancing: try to move lightest position from overweight WTs
+  // Weight balancing: move lightest position from overweight WTs to same-cluster WTs
   for (const srcState of allWTStates) {
     const wt = srcState.wt;
     if (wt.gesamtgewicht_kg <= config.gewicht_soft_kg) continue;
     if (wt.positionen.length <= 1) continue;
 
-    // Find lightest position
-    const sorted = [...wt.positionen].sort(
+    const sortedPos = [...wt.positionen].sort(
       (a, b) => a.gewicht_kg * a.stueckzahl - b.gewicht_kg * b.stueckzahl,
     );
-    const lightest = sorted[0];
-    const artBreite = lightest.breite_mm ?? 0;
+    const lightest = sortedPos[0];
+    const lightestZone = zoneFootprintPos(lightest);
 
-    // Find another WT in same cluster that can take it
     const sameCluster = allWTStates.filter(
       s => s.wt.cluster_id === wt.cluster_id && s.wt.id !== wt.id,
     );
     for (const tgtState of sameCluster) {
       const targetWeight = tgtState.wt.gesamtgewicht_kg + lightest.gewicht_kg * lightest.stueckzahl;
-      if (targetWeight <= config.gewicht_hard_kg) {
-        // Check depth capacity on target
-        const tgtDepth = getWTDepth(tgtState.wt.typ);
-        const needsTeiler = tgtState.stripCount > 0;
-        const depthNeeded = artBreite + (needsTeiler ? config.teiler_breite_mm : 0);
-        if (depthNeeded > tgtDepth - tgtState.usedDepth) continue;
+      if (targetWeight > config.gewicht_hard_kg) continue;
 
-        const idx = wt.positionen.indexOf(lightest);
-        if (idx >= 0) {
-          wt.positionen.splice(idx, 1);
-          tgtState.wt.positionen.push(lightest);
+      const remainingAreaTgt = tgtState.usableArea - tgtState.usedArea;
+      if (lightestZone > remainingAreaTgt) continue;
 
-          // Update source WTState
-          const srcTeiler = srcState.stripCount > 1 ? config.teiler_breite_mm : 0;
-          srcState.usedDepth = Math.max(0, srcState.usedDepth - artBreite - srcTeiler);
-          srcState.stripCount = Math.max(0, srcState.stripCount - 1);
-          updateWTMetrics(srcState, config);
-
-          // Update target WTState
-          tgtState.usedDepth += depthNeeded;
-          tgtState.stripCount++;
-          updateWTMetrics(tgtState, config);
-          break;
-        }
+      const idx = wt.positionen.indexOf(lightest);
+      if (idx >= 0) {
+        wt.positionen.splice(idx, 1);
+        tgtState.wt.positionen.push(lightest);
+        updateWTMetrics(srcState, config);
+        updateWTMetrics(tgtState, config);
+        break;
       }
     }
   }
