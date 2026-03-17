@@ -164,6 +164,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     if (overWeightWTs.length > 0) warnings.push(`${overWeightWTs.length} WTs im Gewicht-Warnbereich (20–24 kg)`);
     if (lowAreaWTs.length > 0) warnings.push(`${lowAreaWTs.length} WTs mit Flächenauslastung < 30%`);
 
+    baseResult.coMatrix = phase2Result.coMatrix;
     baseResult.validation_dashboard = {
       status: dashboardStatus,
       hardChecks,

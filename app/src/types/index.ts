@@ -147,6 +147,7 @@ export interface OptimizationResult {
     gesamtbestand: number;
   };
   validation_dashboard?: ValidationDashboardData;
+  coMatrix?: Record<string, Record<string, number>>;
 }
 
 // ============ VALIDATION TYPES ============

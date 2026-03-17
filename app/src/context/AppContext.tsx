@@ -1,5 +1,6 @@
 import { createContext, useContext, useReducer, useCallback, type ReactNode, type Dispatch } from 'react';
-import type { ArtikelData, BestellungData, BestandData, WTConfig, OptimizationResult, ArtikelProcessed } from '../types';
+import type { ArtikelData, BestellungData, BestandData, WTConfig, OptimizationResult, ArtikelProcessed, ThresholdConfig } from '../types';
+import { DEFAULT_THRESHOLDS } from '../validation/thresholds';
 
 export interface ApiStatus {
   hasStaticData: boolean;
@@ -25,7 +26,8 @@ export interface AppState {
   optimizationStatus: 'idle' | 'running' | 'done' | 'error';
   optimizationProgress: { phase: number; phaseName: string; progress: number };
   result: OptimizationResult | null;
-  activeSection: 'upload' | 'abc' | 'cooccurrence' | 'belegungsplan' | 'visualization' | 'ratio';
+  activeSection: 'upload' | 'abc' | 'cooccurrence' | 'belegungsplan' | 'visualization' | 'ratio' | 'validation';
+  validationThresholds: ThresholdConfig;
   apiStatus: ApiStatus | null;
   apiData: ApiData | null;
   apiLoading: boolean;
@@ -45,7 +47,8 @@ export type Action =
   | { type: 'SET_API_STATUS'; payload: ApiStatus }
   | { type: 'SET_API_DATA'; payload: ApiData }
   | { type: 'SET_API_LOADING'; payload: boolean }
-  | { type: 'SET_API_ERROR'; payload: string | null };
+  | { type: 'SET_API_ERROR'; payload: string | null }
+  | { type: 'SET_VALIDATION_THRESHOLDS'; thresholds: Partial<ThresholdConfig> };
 
 const DEFAULT_CONFIG: WTConfig = {
   anzahl_klein: 4145,
@@ -70,6 +73,7 @@ const initialState: AppState = {
   optimizationProgress: { phase: 0, phaseName: '', progress: 0 },
   result: null,
   activeSection: 'upload',
+  validationThresholds: DEFAULT_THRESHOLDS,
   apiStatus: null,
   apiData: null,
   apiLoading: false,
@@ -104,6 +108,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, apiLoading: action.payload };
     case 'SET_API_ERROR':
       return { ...state, apiError: action.payload };
+    case 'SET_VALIDATION_THRESHOLDS':
+      return { ...state, validationThresholds: { ...state.validationThresholds, ...action.thresholds } };
     default:
       return state;
   }

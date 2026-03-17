@@ -8,6 +8,7 @@ import CoOccurrenceSection from './components/CoOccurrenceSection';
 import BelegungsplanSection from './components/BelegungsplanSection';
 import WTVisualization from './components/WTVisualization';
 import WTRatioSection from './components/WTRatioSection';
+import ValidationDashboard from './components/validation/ValidationDashboard';
 import type { AppState } from './context/AppContext';
 
 const NAV_ITEMS: { id: AppState['activeSection']; label: string; icon: string }[] = [
@@ -17,6 +18,7 @@ const NAV_ITEMS: { id: AppState['activeSection']; label: string; icon: string }[
   { id: 'belegungsplan', label: 'Belegungsplan', icon: '📋' },
   { id: 'visualization', label: 'WT-Visualisierung', icon: '🗺️' },
   { id: 'ratio', label: 'WT-Simulator', icon: '⚖️' },
+  { id: 'validation', label: 'Ergebnisvalidierung', icon: '✓' },
 ];
 
 function ProgressOverlay() {
@@ -113,6 +115,39 @@ export default function App() {
         return <WTVisualization />;
       case 'ratio':
         return <WTRatioSection />;
+      case 'validation':
+        return state.result?.validation_dashboard ? (
+          <ValidationDashboard
+            data={state.result.validation_dashboard}
+            wts={state.result.wts}
+            bestellungen={state.apiData?.bestellungen ?? []}
+            config={state.config}
+            coMatrix={state.result.coMatrix ?? {}}
+            artikelBezeichnungen={new Map(
+              (state.apiData?.artikel ?? []).map(a => [a.artikelnummer, a.bezeichnung])
+            )}
+            onExportBelegungsplan={() => {
+              if (!state.result) return;
+              const headers = ['WT-ID', 'Typ', 'Artikel', 'Bezeichnung', 'Stück', 'Gewicht (kg)', 'Fläche %', 'Cluster', 'ABC', 'Teiler'];
+              const rows = state.result.belegungsplan.map(r =>
+                [r.warentraeger_id, r.warentraeger_typ, r.artikelnummer, r.bezeichnung,
+                 r.stueckzahl, r.gesamtgewicht_kg, r.flaeche_netto_pct, r.cluster_id, r.abc_klasse, r.anzahl_teiler]
+              );
+              const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
+              const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'belegungsplan.csv';
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          />
+        ) : (
+          <div className="flex items-center justify-center h-64 text-gray-400">
+            <p>Erst Optimierung starten um die Validierung zu sehen.</p>
+          </div>
+        );
     }
   };
 
