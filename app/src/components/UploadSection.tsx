@@ -150,7 +150,7 @@ function ConfigPanel() {
 
 export default function UploadSection({ onStartOptimization }: { onStartOptimization?: (data: { artikel: any[]; bestellungen: any[]; bestand: any[] }) => void }) {
   const state = useAppState();
-  const { uploadStaticData, uploadBestandData, loadApiData, checkApiStatus } = useAppActions();
+  const { uploadStaticData, uploadBestandData, loadApiData } = useAppActions();
 
   const [artikelFile, setArtikelFile] = useState<File | null>(null);
   const [bestellungenFile, setBestellungenFile] = useState<File | null>(null);
