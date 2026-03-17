@@ -3,12 +3,19 @@ import { processPhase2 } from '../algorithm/phase2';
 import { processPhase3 } from '../algorithm/phase3';
 import { processPhase4 } from '../algorithm/phase4';
 import { processPhase5 } from '../algorithm/phase5';
+import { runHardChecks } from '../validation/hardChecks';
+import { calculateBaseline } from '../validation/baseline';
+import { calculateMetrics } from '../validation/metrics';
+import { runOrderSimulation } from '../validation/orderSimulation';
+import { calculateExtremes } from '../validation/extremes';
+import { DEFAULT_THRESHOLDS } from '../validation/thresholds';
 import type {
   ArtikelData,
   BestellungData,
   BestandData,
   WTConfig,
   OptimizationResult,
+  ValidationDashboardData,
 } from '../types';
 
 export interface WorkerInput {
@@ -135,6 +142,37 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
 
     const szenarien = processPhase5(baseResult, config, runPipeline, phase2Result.coMatrix);
     baseResult.szenarien = szenarien;
+
+    // Compute validation dashboard
+    const { wts: baselineWTs } = calculateBaseline(phase1Result.processed, config);
+    const hardChecks = runHardChecks(wts, artikel, bestand);
+    const orderSimulation = runOrderSimulation(bestellungen, wts, baselineWTs);
+    const metricsRaw = calculateMetrics(
+      wts, baselineWTs, phase1Result.processed, bestellungen,
+      phase2Result.coMatrix, DEFAULT_THRESHOLDS,
+      orderSimulation.meanPicks, orderSimulation.baselineMeanPicks,
+    );
+    const extremes = calculateExtremes(wts, phase1Result.processed, phase2Result.coMatrix);
+
+    const hasFail = hardChecks.some(c => c.status === 'FAIL');
+    const overWeightWTs = wts.filter(w => w.gesamtgewicht_kg > 20 && w.gesamtgewicht_kg <= 24);
+    const lowAreaWTs = wts.filter(w => w.positionen.length > 0 && w.flaeche_netto_pct < 30);
+    const hasWarning = overWeightWTs.length > 0 || lowAreaWTs.length > 0;
+    const dashboardStatus: ValidationDashboardData['status'] = hasFail ? 'FAILED' : hasWarning ? 'WARNING' : 'PASSED';
+
+    const warnings: string[] = [];
+    if (overWeightWTs.length > 0) warnings.push(`${overWeightWTs.length} WTs im Gewicht-Warnbereich (20–24 kg)`);
+    if (lowAreaWTs.length > 0) warnings.push(`${lowAreaWTs.length} WTs mit Flächenauslastung < 30%`);
+
+    baseResult.validation_dashboard = {
+      status: dashboardStatus,
+      hardChecks,
+      metrics: metricsRaw,
+      baselineWTCount: baselineWTs.length,
+      orderSimulation,
+      extremes,
+      warnings,
+    };
 
     self.postMessage({ type: 'progress', phase: 5, progress: 100 } satisfies WorkerMessage);
     self.postMessage({ type: 'result', result: baseResult } satisfies WorkerMessage);
