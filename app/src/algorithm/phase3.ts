@@ -10,15 +10,12 @@ function getWTDepth(typ: WTTyp): number {
   return typ === 'KLEIN' ? WT_DEPTH_KLEIN : WT_DEPTH_GROSS;
 }
 
-function chooseWTTyp(clusterArticles: ArtikelProcessed[]): WTTyp {
-  const maxFlaeche = Math.max(...clusterArticles.map(a => a.grundflaeche_mm2));
-  if (maxFlaeche > 200_000) return 'GROSS';
-
-  // Check if total space demand suggests a large WT
-  const totalFlaeche = clusterArticles.reduce((s, a) => s + a.grundflaeche_mm2 * a.bestand, 0);
-  if (totalFlaeche / 250_000 > 0.65) return 'GROSS';
-
-  return 'KLEIN';
+function chooseWTTypForArticle(artikel: ArtikelProcessed): WTTyp {
+  // Article must fit within WT dimensions (try both orientations)
+  const fitsKlein =
+    (artikel.breite_mm <= WT_DEPTH_KLEIN && artikel.laenge_mm <= WT_WIDTH) ||
+    (artikel.laenge_mm <= WT_DEPTH_KLEIN && artikel.breite_mm <= WT_WIDTH);
+  return fitsKlein ? 'KLEIN' : 'GROSS';
 }
 
 function createWT(id: string, typ: WTTyp, clusterId: number): WT {
@@ -147,9 +144,6 @@ export function processPhase3(
   }
 
   for (const [clusterId, articles] of clusterGroups) {
-    const wtTyp = chooseWTTyp(articles);
-    const wtDepth = getWTDepth(wtTyp);
-
     // Sort by grundflaeche descending (First Fit Decreasing)
     const sorted = [...articles].sort((a, b) => b.grundflaeche_mm2 - a.grundflaeche_mm2);
 
@@ -164,9 +158,9 @@ export function processPhase3(
       const capPerStrip = stripCapacity(artikel);
       const artStripDepth = stripDepth(artikel);
 
-      // Skip articles that can't fit on this WT type
-      if (capPerStrip <= 0) continue;        // laenge_mm > WT_WIDTH (500mm)
-      if (artStripDepth > wtDepth) continue;  // breite_mm > WT depth
+      // Skip articles that can't fit on any WT type
+      if (capPerStrip <= 0) continue;              // laenge_mm > WT_WIDTH (500mm)
+      if (artStripDepth > WT_DEPTH_GROSS) continue; // breite_mm > largest WT depth
 
       while (remaining > 0) {
         const placeCount = Math.min(remaining, capPerStrip);
@@ -175,6 +169,7 @@ export function processPhase3(
         // Try to fit a strip on an existing WT
         let placed = false;
         for (const wtState of clusterWTStates) {
+          const wtDepth = getWTDepth(wtState.wt.typ);
           // Depth needed: artStripDepth + teiler if not first strip
           const needsTeiler = wtState.stripCount > 0;
           const depthNeeded = artStripDepth + (needsTeiler ? config.teiler_breite_mm : 0);
@@ -204,16 +199,20 @@ export function processPhase3(
         }
 
         if (!placed) {
-          // Open new WT
+          // Determine WT type for this article, respect inventory limits
+          let typ = chooseWTTypForArticle(artikel);
+          if (typ === 'KLEIN' && kleinCounter >= config.anzahl_klein) typ = 'GROSS';
+          if (typ === 'GROSS' && grossCounter >= config.anzahl_gross) typ = 'KLEIN';
+
           let id: string;
-          if (wtTyp === 'KLEIN') {
+          if (typ === 'KLEIN') {
             kleinCounter++;
             id = `K-${String(kleinCounter).padStart(4, '0')}`;
           } else {
             grossCounter++;
             id = `G-${String(grossCounter).padStart(4, '0')}`;
           }
-          const newWT = createWT(id, wtTyp, clusterId);
+          const newWT = createWT(id, typ, clusterId);
           const wtState: WTState = { wt: newWT, usedDepth: 0, stripCount: 0 };
 
           // Place first strip (no teiler needed)
