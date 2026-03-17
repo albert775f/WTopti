@@ -1,119 +1,51 @@
-import { useCallback, useState, useMemo, type DragEvent } from 'react';
-import { useAppState, useAppDispatch } from '../context/AppContext';
-import { parseFile, mapArtikel, mapBestellungen, mapUmsatz, mapBestand, validateHeaders } from '../utils/fileParser';
-import {
-  useReactTable,
-  getCoreRowModel,
-  flexRender,
-  createColumnHelper,
-  type ColumnDef,
-} from '@tanstack/react-table';
+import { useCallback, useState, type DragEvent } from 'react';
+import { useAppState, useAppDispatch, useAppActions } from '../context/AppContext';
 import type { WTConfig } from '../types';
 
-type FileType = 'artikel' | 'bestellungen' | 'umsatz' | 'bestand';
-
-interface FileInfo {
-  name: string;
-  rows: number;
-  preview: Record<string, unknown>[];
+interface DropZoneProps {
+  label: string;
+  accept?: string;
+  file: File | null;
+  onFile: (file: File) => void;
+  disabled?: boolean;
 }
 
-const FILE_LABELS: Record<FileType, string> = {
-  artikel: 'Artikelliste',
-  bestellungen: 'Bestellungen',
-  umsatz: 'Artikelumsatz',
-  bestand: 'Bestandsliste',
-};
-
-function PreviewTable({ data }: { data: Record<string, unknown>[] }) {
-  const columns = useMemo(() => {
-    if (data.length === 0) return [];
-    const helper = createColumnHelper<Record<string, unknown>>();
-    return Object.keys(data[0]).slice(0, 8).map((key) =>
-      helper.accessor((row) => row[key], {
-        id: key,
-        header: key,
-        cell: (info) => {
-          const v = info.getValue();
-          return v == null ? '' : String(v);
-        },
-      })
-    ) as ColumnDef<Record<string, unknown>, unknown>[];
-  }, [data]);
-
-  const table = useReactTable({
-    data: data.slice(0, 10),
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
-  if (data.length === 0) return null;
-
-  return (
-    <div className="mt-2 overflow-x-auto text-xs">
-      <table className="min-w-full border border-gray-200">
-        <thead className="bg-gray-50">
-          {table.getHeaderGroups().map((hg) => (
-            <tr key={hg.id}>
-              {hg.headers.map((h) => (
-                <th key={h.id} className="px-2 py-1 text-left font-medium text-gray-600 border-b">
-                  {flexRender(h.column.columnDef.header, h.getContext())}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr key={row.id} className="border-b hover:bg-gray-50">
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className="px-2 py-1 text-gray-700 max-w-[150px] truncate">
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function DropZone({ fileType, onFile }: { fileType: FileType; onFile: (file: File) => void }) {
-  const { uploadStatus } = useAppState();
-  const status = uploadStatus[fileType];
+function DropZone({ label, file, onFile, disabled }: DropZoneProps) {
   const [dragOver, setDragOver] = useState(false);
 
   const handleDrop = useCallback((e: DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) onFile(file);
-  }, [onFile]);
+    if (disabled) return;
+    const f = e.dataTransfer.files[0];
+    if (f) onFile(f);
+  }, [onFile, disabled]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
-    setDragOver(true);
-  }, []);
+    if (!disabled) setDragOver(true);
+  }, [disabled]);
 
-  const borderColor = status === 'valid'
+  const hasFile = file !== null;
+  const borderColor = hasFile
     ? 'border-green-500 bg-green-50'
-    : status === 'error'
-    ? 'border-red-500 bg-red-50'
     : dragOver
     ? 'border-blue-500 bg-blue-50'
+    : disabled
+    ? 'border-gray-200 bg-gray-50'
     : 'border-gray-300 bg-white';
 
-  const icon = status === 'valid' ? '✓' : status === 'error' ? '✗' : status === 'loading' ? '⏳' : '↑';
-  const iconColor = status === 'valid' ? 'text-green-600' : status === 'error' ? 'text-red-600' : 'text-gray-400';
+  const icon = hasFile ? '✓' : '↑';
+  const iconColor = hasFile ? 'text-green-600' : disabled ? 'text-gray-300' : 'text-gray-400';
 
   return (
     <div
-      className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${borderColor}`}
+      className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${borderColor} ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
       onDragLeave={() => setDragOver(false)}
       onClick={() => {
+        if (disabled) return;
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.csv,.xlsx,.xls';
@@ -124,8 +56,12 @@ function DropZone({ fileType, onFile }: { fileType: FileType; onFile: (file: Fil
       }}
     >
       <span className={`text-2xl ${iconColor}`}>{icon}</span>
-      <p className="mt-1 text-sm font-medium text-gray-700">{FILE_LABELS[fileType]}</p>
-      <p className="text-xs text-gray-500">CSV / XLSX</p>
+      <p className="mt-1 text-sm font-medium text-gray-700">{label}</p>
+      {hasFile ? (
+        <p className="text-xs text-green-600">{file.name}</p>
+      ) : (
+        <p className="text-xs text-gray-500">CSV / XLSX / XLS</p>
+      )}
     </div>
   );
 }
@@ -176,6 +112,13 @@ function ConfigPanel() {
             onChange={(e) => update({ co_occurrence_schwellwert: +e.target.value })}
             className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
         </label>
+        <label className="block">
+          <span className="text-gray-600">A-Artikel Scatter (Kopien)</span>
+          <input type="number" value={config.a_artikel_scatter_n} min={1} max={10}
+            onChange={(e) => update({ a_artikel_scatter_n: Math.max(1, Math.min(10, +e.target.value)) })}
+            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
+          <span className="text-xs text-gray-400">Anzahl WTs auf die A-Artikel verteilt werden</span>
+        </label>
         <div className="col-span-2 md:col-span-3">
           <span className="text-gray-600 text-sm">Teiler-Modus</span>
           <div className="flex items-center gap-4 mt-1">
@@ -205,110 +148,182 @@ function ConfigPanel() {
   );
 }
 
-export default function UploadSection({ onStartOptimization }: { onStartOptimization?: () => void }) {
+export default function UploadSection({ onStartOptimization }: { onStartOptimization?: (data: { artikel: any[]; bestellungen: any[]; bestand: any[] }) => void }) {
   const state = useAppState();
-  const dispatch = useAppDispatch();
-  const [files, setFiles] = useState<Record<FileType, FileInfo | null>>({
-    artikel: null, bestellungen: null, umsatz: null, bestand: null,
-  });
-  const [activePreview, setActivePreview] = useState<FileType | null>(null);
+  const { uploadStaticData, uploadBestandData, loadApiData, checkApiStatus } = useAppActions();
 
-  const handleFile = useCallback(async (fileType: FileType, file: File) => {
-    dispatch({ type: 'SET_UPLOAD_STATUS', key: fileType, status: 'loading' });
+  const [artikelFile, setArtikelFile] = useState<File | null>(null);
+  const [bestellungenFile, setBestellungenFile] = useState<File | null>(null);
+  const [bestandFile, setBestandFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const [showReupload, setShowReupload] = useState(false);
+
+  const hasStaticData = state.apiStatus?.hasStaticData === true;
+
+  const handleStaticUpload = useCallback(async () => {
+    if (!artikelFile || !bestellungenFile) return;
+    setUploading(true);
+    setUploadMsg(null);
     try {
-      const rows = await parseFile(file);
-      const { valid, missing } = validateHeaders(rows, fileType);
-
-      if (!valid) {
-        dispatch({ type: 'SET_UPLOAD_STATUS', key: fileType, status: 'error' });
-        dispatch({ type: 'SET_UPLOAD_ERROR', key: fileType, error: `Fehlende Spalten: ${missing.join(', ')}` });
-        return;
-      }
-
-      // Map and store data
-      switch (fileType) {
-        case 'artikel':
-          dispatch({ type: 'SET_ARTIKEL', payload: mapArtikel(rows) });
-          break;
-        case 'bestellungen':
-          dispatch({ type: 'SET_BESTELLUNGEN', payload: mapBestellungen(rows) });
-          break;
-        case 'umsatz':
-          dispatch({ type: 'SET_UMSATZ', payload: mapUmsatz(rows) });
-          break;
-        case 'bestand':
-          dispatch({ type: 'SET_BESTAND', payload: mapBestand(rows) });
-          break;
-      }
-
-      setFiles((prev) => ({
-        ...prev,
-        [fileType]: { name: file.name, rows: rows.length, preview: rows.slice(0, 10) },
-      }));
-      dispatch({ type: 'SET_UPLOAD_STATUS', key: fileType, status: 'valid' });
-    } catch (err) {
-      dispatch({ type: 'SET_UPLOAD_STATUS', key: fileType, status: 'error' });
-      dispatch({ type: 'SET_UPLOAD_ERROR', key: fileType, error: String(err) });
+      await uploadStaticData(artikelFile, bestellungenFile);
+      setUploadMsg('Statische Daten erfolgreich hochgeladen!');
+      setArtikelFile(null);
+      setBestellungenFile(null);
+      setShowReupload(false);
+    } catch {
+      setUploadMsg('Upload fehlgeschlagen. Bitte erneut versuchen.');
+    } finally {
+      setUploading(false);
     }
-  }, [dispatch]);
+  }, [artikelFile, bestellungenFile, uploadStaticData]);
 
-  const allValid = (Object.keys(state.uploadStatus) as FileType[]).every(
-    (k) => state.uploadStatus[k] === 'valid'
-  );
+  const handleStartOptimization = useCallback(async () => {
+    if (!bestandFile) return;
+    setUploading(true);
+    setUploadMsg(null);
+    try {
+      await uploadBestandData(bestandFile);
+      const data = await loadApiData();
+      setBestandFile(null);
+      if (onStartOptimization) {
+        onStartOptimization(data);
+      }
+    } catch {
+      setUploadMsg('Fehler beim Starten der Optimierung.');
+    } finally {
+      setUploading(false);
+    }
+  }, [bestandFile, uploadBestandData, loadApiData, onStartOptimization]);
+
+  const formatDate = (iso?: string) => {
+    if (!iso) return null;
+    try {
+      return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch {
+      return iso;
+    }
+  };
 
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-gray-800">Daten-Upload</h2>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {(Object.keys(FILE_LABELS) as FileType[]).map((ft) => (
-          <div key={ft}>
-            <DropZone fileType={ft} onFile={(f) => handleFile(ft, f)} />
-            {files[ft] && (
-              <div className="mt-1 text-xs text-gray-500 flex items-center justify-between">
-                <span>{files[ft]!.name} ({files[ft]!.rows} Zeilen)</span>
-                <button
-                  onClick={() => setActivePreview(activePreview === ft ? null : ft)}
-                  className="text-blue-600 hover:underline"
-                >
-                  {activePreview === ft ? 'Ausblenden' : 'Vorschau'}
-                </button>
-              </div>
-            )}
-            {state.uploadErrors[ft] && state.uploadStatus[ft] === 'error' && (
-              <p className="mt-1 text-xs text-red-600">{state.uploadErrors[ft]}</p>
+      {/* State A: No static data OR re-uploading */}
+      {(!hasStaticData || showReupload) && (
+        <div className="bg-white rounded-lg border border-gray-200 p-5">
+          <h3 className="text-base font-semibold text-gray-800 mb-1">
+            Ersteinrichtung — Statische Daten
+          </h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Diese Dateien werden einmalig hochgeladen und persistent gespeichert.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <DropZone
+              label="Artikelliste.xlsx"
+              file={artikelFile}
+              onFile={setArtikelFile}
+              disabled={uploading}
+            />
+            <DropZone
+              label="Bestellungen.xlsx"
+              file={bestellungenFile}
+              onFile={setBestellungenFile}
+              disabled={uploading}
+            />
+          </div>
+          {uploadMsg && (
+            <p className={`mt-3 text-sm ${uploadMsg.includes('erfolgreich') ? 'text-green-600' : 'text-red-600'}`}>
+              {uploadMsg}
+            </p>
+          )}
+          <div className="flex gap-2 mt-4">
+            <button
+              disabled={!artikelFile || !bestellungenFile || uploading}
+              className={`flex-1 py-2.5 rounded-lg text-white font-semibold transition-colors ${
+                artikelFile && bestellungenFile && !uploading
+                  ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
+                  : 'bg-gray-300 cursor-not-allowed'
+              }`}
+              onClick={handleStaticUpload}
+            >
+              {uploading ? 'Wird hochgeladen...' : 'Statische Daten hochladen und verarbeiten'}
+            </button>
+            {showReupload && (
+              <button
+                onClick={() => { setShowReupload(false); setUploadMsg(null); }}
+                className="px-4 py-2.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Abbrechen
+              </button>
             )}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
-      {activePreview && files[activePreview] && (
-        <div className="bg-white rounded-lg border border-gray-200 p-3">
-          <h3 className="text-sm font-medium text-gray-700 mb-1">
-            Vorschau: {FILE_LABELS[activePreview]}
-          </h3>
-          <PreviewTable data={files[activePreview]!.preview} />
+      {/* State B: Static data loaded */}
+      {hasStaticData && !showReupload && (
+        <div className="space-y-4">
+          <div className="bg-green-50 rounded-lg border border-green-200 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-green-800">
+                  Statische Daten geladen
+                </p>
+                <p className="text-sm text-green-700">
+                  {state.apiStatus?.artikelCount?.toLocaleString('de-DE')} Artikel
+                  {' · '}
+                  {state.apiStatus?.bestellungenCount?.toLocaleString('de-DE')} Bestellungen
+                </p>
+              </div>
+              <button
+                onClick={() => setShowReupload(true)}
+                className="text-xs text-green-700 hover:text-green-900 underline"
+              >
+                Neu hochladen
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-5">
+            <h3 className="text-base font-semibold text-gray-800 mb-1">
+              Bestandsliste hochladen
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              {state.apiStatus?.lastBestandUpload
+                ? `Letzte Bestandsliste: ${formatDate(state.apiStatus.lastBestandUpload)}`
+                : 'Keine Bestandsliste geladen'}
+            </p>
+            <DropZone
+              label="Bestandsliste (.xls / .xlsx)"
+              file={bestandFile}
+              onFile={setBestandFile}
+              disabled={uploading}
+            />
+            {uploadMsg && (
+              <p className={`mt-3 text-sm ${uploadMsg.includes('erfolgreich') ? 'text-green-600' : 'text-red-600'}`}>
+                {uploadMsg}
+              </p>
+            )}
+            {state.apiError && (
+              <p className="mt-3 text-sm text-red-600">{state.apiError}</p>
+            )}
+            <button
+              disabled={!bestandFile || uploading}
+              className={`mt-4 w-full py-3 rounded-lg text-white font-semibold transition-colors ${
+                bestandFile && !uploading
+                  ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
+                  : 'bg-gray-300 cursor-not-allowed'
+              }`}
+              onClick={handleStartOptimization}
+            >
+              {uploading ? 'Wird verarbeitet...' : 'Optimierung starten'}
+            </button>
+          </div>
         </div>
       )}
 
       <ConfigPanel />
-
-      <button
-        disabled={!allValid}
-        className={`w-full py-3 rounded-lg text-white font-semibold transition-colors ${
-          allValid
-            ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
-            : 'bg-gray-300 cursor-not-allowed'
-        }`}
-        onClick={() => {
-          if (allValid && onStartOptimization) {
-            onStartOptimization();
-            dispatch({ type: 'SET_SECTION', section: 'abc' });
-          }
-        }}
-      >
-        Optimierung starten
-      </button>
     </div>
   );
 }
