@@ -146,4 +146,87 @@ export interface OptimizationResult {
     wts_gross: number;
     gesamtbestand: number;
   };
+  validation_dashboard?: ValidationDashboardData;
+}
+
+// ============ VALIDATION TYPES ============
+
+export type AmpelColor = 'green' | 'yellow' | 'red';
+
+export interface HardCheckDetail {
+  key: string;
+  expected: string;
+  actual: string;
+  message: string;
+}
+
+export interface HardCheckResult {
+  id: string;         // "C1"..."C8"
+  name: string;
+  status: 'PASS' | 'FAIL';
+  errorCount: number;
+  details: HardCheckDetail[];
+}
+
+export interface MetricResult {
+  id: string;         // "M1"..."M10"
+  name: string;
+  value: number;
+  baseline: number;
+  delta: number;
+  deltaPercent: number;
+  ampel: AmpelColor;
+  unit: string;       // "%", "kg", "Stück", ""
+}
+
+export interface ExtremeEntry {
+  rank: number;
+  key: string;        // Artikelnr. or WT-ID
+  label: string;
+  value: number;
+  unit: string;
+  targetWTId?: string;
+}
+
+export interface ThresholdConfig {
+  M2: { green: number; yellow: number };
+  M3: { greenLow: number; greenHigh: number; yellowHigh: number };
+  M4: { green: number; yellow: number };
+  M5: { green: number; yellow: number };
+  M6: { green: number; yellow: number };
+  M7: { green: number; yellow: number };
+  M8: { green: number; yellow: number };
+  M9: { green: number; yellow: number };
+}
+
+export interface OrderSimulationResult {
+  seed: number;
+  sampleSize: number;
+  pickCounts: number[];
+  histogram: Array<{ bin: number; count: number }>;
+  meanPicks: number;
+  medianPicks: number;
+  baselineHistogram: Array<{ bin: number; count: number }>;
+  baselineMeanPicks: number;
+}
+
+export interface ExtremesResult {
+  largestArticle: ExtremeEntry[];
+  heaviestArticle: ExtremeEntry[];
+  highestStock: ExtremeEntry[];
+  mostOrdered: ExtremeEntry[];
+  topCoOccPair: ExtremeEntry[];
+  fullestWTs: ExtremeEntry[];
+  emptiestWTs: ExtremeEntry[];
+  mostArticleTypes: ExtremeEntry[];
+}
+
+export interface ValidationDashboardData {
+  status: 'PASSED' | 'FAILED' | 'WARNING';
+  hardChecks: HardCheckResult[];
+  metrics: MetricResult[];
+  baselineWTCount: number;
+  orderSimulation: OrderSimulationResult | null;
+  extremes: ExtremesResult;
+  warnings: string[];
 }
