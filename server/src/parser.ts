@@ -1,5 +1,16 @@
 import * as XLSX from 'xlsx';
 
+function safeParseFloat(val: unknown): number | null {
+  if (val === null || val === undefined) return null;
+  const s = String(val)
+    .replace(/,{2,}/g, ',')    // "14,,5" → "14,5"
+    .replace(',', '.')          // German decimal comma → dot
+    .trim();
+  if (s === '' || s.toLowerCase().includes('nicht gefunden')) return null;
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
 export interface ArtikelRow {
   artikelnummer: string;
   bezeichnung: string;
@@ -41,16 +52,24 @@ export function parseArtikel(buffer: Buffer): ArtikelRow[] {
     const sperrgut = row['Sperrgut'];
     if (sperrgut !== null && sperrgut !== undefined && String(sperrgut).trim() !== '') continue;
 
-    const gewicht_kg = parseFloat(String(row['Gewicht in kg'] ?? '0'));
+    const gewicht_kg = safeParseFloat(row['Gewicht in kg']);
     // Skip articles with no weight or weight > 24kg
-    if (!gewicht_kg || gewicht_kg <= 0 || gewicht_kg > 24) continue;
+    if (gewicht_kg === null || gewicht_kg <= 0 || gewicht_kg > 24) continue;
 
     // Dimensions in cm → convert to mm (multiply by 10)
-    const hoehe_mm = parseFloat(String(row['Höhe_cm'] ?? '0')) * 10;
-    const breite_mm = parseFloat(String(row['Breite_cm'] ?? '0')) * 10;
-    const laenge_mm = parseFloat(String(row['Länge_cm'] ?? '0')) * 10;
+    const hoehe_cm = safeParseFloat(row['Höhe_cm']);
+    const breite_cm = safeParseFloat(row['Breite_cm']);
+    const laenge_cm = safeParseFloat(row['Länge_cm']);
 
-    if (!hoehe_mm || !breite_mm || !laenge_mm) continue;
+    if (hoehe_cm === null || breite_cm === null || laenge_cm === null ||
+        hoehe_cm <= 0 || breite_cm <= 0 || laenge_cm <= 0) {
+      console.warn(`[parser] Skipping article ${artikelnummer}: invalid dimensions/weight`);
+      continue;
+    }
+
+    const hoehe_mm = hoehe_cm * 10;
+    const breite_mm = breite_cm * 10;
+    const laenge_mm = laenge_cm * 10;
 
     const volumen_l = row['Volumen in Liter'] ? parseFloat(String(row['Volumen in Liter'])) : undefined;
     const grundflaeche_mm2 = breite_mm * laenge_mm;
