@@ -10,12 +10,93 @@ function getWTDepth(typ: WTTyp): number {
   return typ === 'KLEIN' ? WT_DEPTH_KLEIN : WT_DEPTH_GROSS;
 }
 
-function chooseWTTypForArticle(artikel: ArtikelProcessed): WTTyp {
-  // Article must fit within WT dimensions (try both orientations)
-  const fitsKlein =
-    (artikel.breite_mm <= WT_DEPTH_KLEIN && artikel.laenge_mm <= WT_WIDTH) ||
-    (artikel.laenge_mm <= WT_DEPTH_KLEIN && artikel.breite_mm <= WT_WIDTH);
-  return fitsKlein ? 'KLEIN' : 'GROSS';
+export interface WTTypePreference {
+  artikelnummer: string;
+  nKlein: number;        // KLEIN WTs needed for this article's full stock
+  nGross: number;        // GROSS WTs needed
+  mustGross: boolean;    // breite_mm > WT_DEPTH_KLEIN — doesn't fit KLEIN
+  efficiency: number;    // (nKlein - nGross) / nGross — KLEIN saved per GROSS used
+}
+
+/**
+ * Pre-plan which articles should go on GROSS WTs based on depth-efficiency.
+ * Articles that benefit from GROSS depth (geometry-limited, not weight-limited)
+ * are ranked by efficiency and greedily assigned to GROSS until budget exhausted.
+ */
+export function planWTTypes(
+  processed: ArtikelProcessed[],
+  config: WTConfig,
+): { plan: Map<string, WTTyp>; preferences: WTTypePreference[]; grossBudgetUsed: number } {
+  const preferences: WTTypePreference[] = [];
+
+  for (const art of processed) {
+    if (art.bestand <= 0) continue;
+    if (art.hoehe_mm > config.hoehe_limit_mm) continue;
+    if (art.grundflaeche_mm2 <= 0) continue;
+    if (art.laenge_mm > WT_WIDTH) continue;         // not placeable on any WT
+    if (art.breite_mm > WT_DEPTH_GROSS) continue;   // not placeable on any WT
+
+    const capPerStrip = Math.floor(WT_WIDTH / art.laenge_mm) * Math.max(1, art.max_stapelhoehe);
+    if (capPerStrip <= 0) continue;
+
+    // Strip model: no teilers between same-article strips
+    const stripsKlein = Math.floor(WT_DEPTH_KLEIN / art.breite_mm);
+    const stripsGross = Math.floor(WT_DEPTH_GROSS / art.breite_mm);
+    const weightCap = art.gewicht_kg > 0 ? Math.floor(config.gewicht_hard_kg / art.gewicht_kg) : 999999;
+
+    const fitsKlein = art.breite_mm <= WT_DEPTH_KLEIN;
+    const mustGross = !fitsKlein;
+
+    const itemsPerKlein = fitsKlein ? Math.min(stripsKlein * capPerStrip, weightCap) : 0;
+    const itemsPerGross = Math.min(stripsGross * capPerStrip, weightCap);
+
+    const nKlein = fitsKlein ? Math.ceil(art.bestand / Math.max(1, itemsPerKlein)) : 999999;
+    const nGross = Math.ceil(art.bestand / Math.max(1, itemsPerGross));
+    const efficiency = nKlein > nGross ? (nKlein - nGross) / Math.max(1, nGross) : 0;
+
+    preferences.push({
+      artikelnummer: String(art.artikelnummer),
+      nKlein,
+      nGross,
+      mustGross,
+      efficiency,
+    });
+  }
+
+  const plan = new Map<string, WTTyp>();
+  let grossBudget = config.anzahl_gross;
+  let grossBudgetUsed = 0;
+
+  // Must-GROSS first (physically don't fit KLEIN)
+  for (const p of preferences.filter(p => p.mustGross)) {
+    plan.set(p.artikelnummer, 'GROSS');
+    grossBudget -= p.nGross;
+    grossBudgetUsed += p.nGross;
+  }
+
+  // Efficiency-ranked candidates: articles that save KLEIN WTs by going to GROSS
+  const candidates = preferences
+    .filter(p => !p.mustGross && p.nGross < p.nKlein)
+    .sort((a, b) => b.efficiency - a.efficiency);
+
+  for (const p of candidates) {
+    if (grossBudget >= p.nGross) {
+      plan.set(p.artikelnummer, 'GROSS');
+      grossBudget -= p.nGross;
+      grossBudgetUsed += p.nGross;
+    } else {
+      plan.set(p.artikelnummer, 'KLEIN');
+    }
+  }
+
+  // Default: KLEIN for remaining articles
+  for (const p of preferences) {
+    if (!plan.has(p.artikelnummer)) {
+      plan.set(p.artikelnummer, 'KLEIN');
+    }
+  }
+
+  return { plan, preferences, grossBudgetUsed };
 }
 
 function createWT(id: string, typ: WTTyp, clusterId: number): WT {
@@ -131,6 +212,9 @@ export function processPhase3(
   _clusters: ClusterResult,
   config: WTConfig,
 ): WT[] {
+  // Pre-plan WT types: efficiency-based allocation (geometry-limited → GROSS)
+  const { plan: wtTypePlan } = planWTTypes(processed, config);
+
   // Apply A-Artikel scattering before packing
   const scattered = scatterAArtikel(processed, config);
 
@@ -230,8 +314,8 @@ export function processPhase3(
 
           const actualPlace = Math.min(placeCount, maxByWeight);
 
-          // Determine WT type for this article, respect inventory limits
-          let typ = chooseWTTypForArticle(artikel);
+          // Determine WT type: use efficiency-based plan, fall back if inventory exhausted
+          let typ: WTTyp = wtTypePlan.get(String(artikel.artikelnummer)) ?? 'KLEIN';
           if (typ === 'KLEIN' && kleinCounter >= config.anzahl_klein) typ = 'GROSS';
           if (typ === 'GROSS' && grossCounter >= config.anzahl_gross) typ = 'KLEIN';
 

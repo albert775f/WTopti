@@ -140,8 +140,11 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       return { ...baseResult, wts: w };
     };
 
-    const szenarien = processPhase5(baseResult, config, runPipeline, phase2Result.coMatrix);
+    const { szenarien, recommendation } = processPhase5(
+      baseResult, config, phase1Result.processed, runPipeline, phase2Result.coMatrix,
+    );
     baseResult.szenarien = szenarien;
+    baseResult.wt_recommendation = recommendation;
 
     // Compute validation dashboard
     const { wts: baselineWTs } = calculateBaseline(phase1Result.processed, config);

@@ -104,6 +104,24 @@ export interface BelegungsplanRow {
   anzahl_teiler: number;
 }
 
+// ============ WT-RATIO RECOMMENDATION ============
+
+export interface WTRatioRecommendation {
+  available_klein: number;
+  available_gross: number;
+  optimal_klein_used: number;
+  optimal_gross_used: number;
+  klein_free: number;
+  gross_free: number;
+  articles_on_klein: number;     // article types planned for KLEIN
+  articles_on_gross: number;     // article types planned for GROSS (efficiency + must)
+  articles_must_gross: number;   // article types that don't physically fit KLEIN
+  wts_if_all_klein: number;      // WTs needed if GROSS budget were 0
+  wts_optimal: number;           // WTs used with efficiency-based planning
+  klein_saved: number;           // wts_if_all_klein - wts_optimal
+  empfehlung: string;
+}
+
 // ============ OUTPUT 2: SZENARIO-ERGEBNIS ============
 
 export interface SzenarioResult {
@@ -148,6 +166,7 @@ export interface OptimizationResult {
   };
   validation_dashboard?: ValidationDashboardData;
   coMatrix?: Record<string, Record<string, number>>;
+  wt_recommendation?: WTRatioRecommendation;
 }
 
 // ============ VALIDATION TYPES ============

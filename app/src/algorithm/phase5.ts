@@ -1,8 +1,8 @@
-import type { WTConfig, SzenarioResult, OptimizationResult } from '../types';
+import type { WTConfig, SzenarioResult, OptimizationResult, ArtikelProcessed, WTRatioRecommendation } from '../types';
 import type { CoOccurrenceMatrix } from './phase2';
+import { planWTTypes } from './phase3';
 
 function calcCoOccurrenceScore(result: OptimizationResult, coMatrix: CoOccurrenceMatrix): number {
-  // Average co-occurrence value for article pairs on the same WT
   let totalPairs = 0;
   let totalScore = 0;
 
@@ -28,34 +28,20 @@ function buildSzenario(
   coMatrix: CoOccurrenceMatrix,
 ): SzenarioResult {
   const stellplaetze = anzahlKlein + anzahlGross * 1.5;
-
   const wtsMitPositionen = result.wts.filter(w => w.positionen.length > 0);
+
   const avgFlaeche = wtsMitPositionen.length > 0
     ? wtsMitPositionen.reduce((s, w) => s + w.flaeche_netto_pct, 0) / wtsMitPositionen.length
     : 0;
 
   const avgGewicht = wtsMitPositionen.length > 0
-    ? wtsMitPositionen.reduce((s, w) => {
-        return s + (w.gesamtgewicht_kg / 24) * 100;
-      }, 0) / wtsMitPositionen.length
+    ? wtsMitPositionen.reduce((s, w) => s + (w.gesamtgewicht_kg / 24) * 100, 0) / wtsMitPositionen.length
     : 0;
 
   const wtsBenoetigt = result.wts.length;
   const wtsUngenutzt = Math.max(0, (anzahlKlein + anzahlGross) - wtsBenoetigt);
-  const wtsUeberlast = result.wts.filter(
-    w => w.gesamtgewicht_kg > 20 && w.gesamtgewicht_kg <= 24,
-  ).length;
-
+  const wtsUeberlast = result.wts.filter(w => w.gesamtgewicht_kg > 20 && w.gesamtgewicht_kg <= 24).length;
   const coScore = calcCoOccurrenceScore(result, coMatrix);
-
-  let empfehlung = '';
-  if (avgFlaeche < 50) {
-    empfehlung = 'Zu viele WTs vorhanden — Anzahl reduzieren oder Bestand konsolidieren.';
-  } else if (wtsUeberlast / Math.max(wtsBenoetigt, 1) > 0.1) {
-    empfehlung = 'Zu wenige WTs oder mehr Große benötigt — Gewichtsverteilung prüfen.';
-  } else {
-    empfehlung = 'Verhältnis ist ausgeglichen.';
-  }
 
   return {
     szenario: name,
@@ -67,56 +53,101 @@ function buildSzenario(
     wts_ungenutzt: wtsUngenutzt,
     wts_ueberlast: wtsUeberlast,
     co_occurrence_score: coScore,
-    empfehlung,
+    empfehlung: '',
   };
 }
 
 export function processPhase5(
   baseResult: OptimizationResult,
   config: WTConfig,
+  processed: ArtikelProcessed[],
   runFullPipeline: (cfg: WTConfig) => OptimizationResult,
   coMatrix: CoOccurrenceMatrix,
-): SzenarioResult[] {
+): { szenarien: SzenarioResult[]; recommendation: WTRatioRecommendation } {
   const szenarien: SzenarioResult[] = [];
 
-  // 1. "Aktuell"
-  szenarien.push(buildSzenario('Aktuell', config.anzahl_klein, config.anzahl_gross, baseResult, coMatrix));
+  // Scenario 1: "Optimal (Aktuell)" — efficiency-based planning (what we actually built)
+  szenarien.push(buildSzenario(
+    'Optimal (Aktuell)',
+    config.anzahl_klein, config.anzahl_gross,
+    baseResult, coMatrix,
+  ));
 
-  // 2. "Nur Kleine": convert all capacity to K-equivalents
-  const totalKEquiv = config.anzahl_klein + config.anzahl_gross * 1.5;
-  const nurKleinConfig = { ...config, anzahl_klein: Math.round(totalKEquiv), anzahl_gross: 0 };
+  // Scenario 2: "Nur KLEIN (Simulation)" — what happens with no GROSS budget
+  const nurKleinConfig = { ...config, anzahl_gross: 0, anzahl_klein: config.anzahl_klein + Math.round(config.anzahl_gross * 1.5) };
   const nurKleinResult = runFullPipeline(nurKleinConfig);
-  szenarien.push(buildSzenario('Nur Kleine', nurKleinConfig.anzahl_klein, 0, nurKleinResult, coMatrix));
+  szenarien.push(buildSzenario(
+    'Nur KLEIN (Simulation)',
+    nurKleinConfig.anzahl_klein, 0,
+    nurKleinResult, coMatrix,
+  ));
 
-  // 3. "Mehr Große": 25% weniger Klein, proportional mehr Groß (2G = 3K)
-  const wenigerKlein = Math.round(config.anzahl_klein * 0.75);
-  const freigesetztK = config.anzahl_klein - wenigerKlein;
-  const mehrGross = config.anzahl_gross + Math.round(freigesetztK * 2 / 3);
-  const mehrGrossConfig = { ...config, anzahl_klein: wenigerKlein, anzahl_gross: mehrGross };
-  const mehrGrossResult = runFullPipeline(mehrGrossConfig);
-  szenarien.push(buildSzenario('Mehr Große', wenigerKlein, mehrGross, mehrGrossResult, coMatrix));
+  // Scenario 3: "Nur GROSS (Simulation)" — all capacity as GROSS
+  const nurGrossKleinEquiv = config.anzahl_klein + Math.round(config.anzahl_gross * 1.5);
+  const nurGrossCount = Math.floor(nurGrossKleinEquiv / 1.5);
+  const nurGrossConfig = { ...config, anzahl_klein: 0, anzahl_gross: nurGrossCount };
+  const nurGrossResult = runFullPipeline(nurGrossConfig);
+  szenarien.push(buildSzenario(
+    'Nur GROSS (Simulation)',
+    0, nurGrossCount,
+    nurGrossResult, coMatrix,
+  ));
 
-  // 4. "Optimiert": test 5 variants (±10%, ±20% ratio) → best utilization
-  const variants = [-0.2, -0.1, 0, 0.1, 0.2];
-  let bestVariant: SzenarioResult | null = null;
-  let bestAuslastung = -1;
+  // Build recommendation from article-level analysis
+  const { preferences } = planWTTypes(processed, config);
 
-  for (const shift of variants) {
-    const kShift = Math.round(config.anzahl_klein * (1 + shift));
-    const kDiff = config.anzahl_klein - kShift;
-    const gShift = config.anzahl_gross + Math.round(kDiff * 2 / 3);
-    const varConfig = { ...config, anzahl_klein: kShift, anzahl_gross: Math.max(0, gShift) };
-    const varResult = runFullPipeline(varConfig);
-    const scenario = buildSzenario('Optimiert', kShift, Math.max(0, gShift), varResult, coMatrix);
-    if (scenario.auslastung_flaeche_avg > bestAuslastung) {
-      bestAuslastung = scenario.auslastung_flaeche_avg;
-      bestVariant = scenario;
+  let articles_on_gross = 0;
+  let articles_on_klein = 0;
+  let articles_must_gross = 0;
+
+  for (const p of preferences) {
+    if (p.mustGross) {
+      articles_must_gross++;
+      articles_on_gross++;
+    } else if (p.nGross < p.nKlein) {
+      // This article benefited from GROSS in the plan
+      // Check the plan outcome via baseResult stats (approximate: count by plan, not by actual allocation)
+      articles_on_gross++;
+    } else {
+      articles_on_klein++;
     }
   }
+  // Remaining articles defaulted to KLEIN
+  articles_on_klein = preferences.length - articles_on_gross;
 
-  if (bestVariant) {
-    szenarien.push(bestVariant);
+  const optimal_klein_used = baseResult.stats.wts_klein;
+  const optimal_gross_used = baseResult.stats.wts_gross;
+  const klein_free = Math.max(0, config.anzahl_klein - optimal_klein_used);
+  const gross_free = Math.max(0, config.anzahl_gross - optimal_gross_used);
+  const wts_if_all_klein = nurKleinResult.wts.length;
+  const wts_optimal = baseResult.wts.length;
+  const klein_saved = Math.max(0, wts_if_all_klein - wts_optimal);
+
+  let empfehlung: string;
+  if (optimal_klein_used > config.anzahl_klein) {
+    empfehlung = `KLEIN-Bestand erschöpft (${optimal_klein_used - config.anzahl_klein} fehlen). Mehr GROSS-WTs beschaffen oder Artikelbestand reduzieren.`;
+  } else if (klein_saved > 0) {
+    empfehlung = `Effizienz-Planung spart ${klein_saved} KLEIN-WTs gegenüber einer reinen KLEIN-Strategie. ` +
+      `${optimal_gross_used} GROSS-WTs genutzt (${gross_free} frei), ${klein_free} KLEIN-WTs frei für künftigen Bestand.`;
+  } else {
+    empfehlung = `WT-Verhältnis ausgeglichen. ${klein_free} KLEIN und ${gross_free} GROSS frei.`;
   }
 
-  return szenarien;
+  const recommendation: WTRatioRecommendation = {
+    available_klein: config.anzahl_klein,
+    available_gross: config.anzahl_gross,
+    optimal_klein_used,
+    optimal_gross_used,
+    klein_free,
+    gross_free,
+    articles_on_klein,
+    articles_on_gross,
+    articles_must_gross,
+    wts_if_all_klein,
+    wts_optimal,
+    klein_saved,
+    empfehlung,
+  };
+
+  return { szenarien, recommendation };
 }
