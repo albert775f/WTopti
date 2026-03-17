@@ -101,26 +101,35 @@ function checkC6_KeineLeereWTs(wts: WT[]): HardCheckResult {
 
 function checkC7_FlaechenIntegritaet(wts: WT[]): HardCheckResult {
   const details: HardCheckDetail[] = [];
-  const TEILER_MM = 5;
+  const AREA_USABLE_FRACTION = 0.92;
+
   for (const wt of wts) {
-    const maxDepth = wt.typ === 'KLEIN' ? 500 : 800;
-    let totalDepth = 0;
-    for (let i = 0; i < wt.positionen.length; i++) {
-      const pos = wt.positionen[i];
+    const wtArea = wt.typ === 'KLEIN' ? 250000 : 400000;
+    const usableArea = wtArea * AREA_USABLE_FRACTION;
+
+    let usedArea = 0;
+    for (const pos of wt.positionen) {
+      const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
+      const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
       const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-      const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
-      const slotsAcross = Math.max(1, Math.floor(500 / laenge));
-      const capPerStrip = slotsAcross * maxStapel;
-      const stripsNeeded = Math.max(1, Math.ceil(pos.stueckzahl / capPerStrip));
-      totalDepth += stripsNeeded * breite;
-      if (i > 0) totalDepth += TEILER_MM;
+      usedArea += stacksNeeded * laenge * breite;
     }
-    if (totalDepth > maxDepth + 1) { // +1mm tolerance
-      details.push({ key: wt.id, expected: `≤${maxDepth} mm`, actual: `${Math.round(totalDepth)} mm`, message: `WT ${wt.id} überläuft: ${Math.round(totalDepth)} mm > ${maxDepth} mm` });
+
+    if (usedArea > usableArea * 1.01) { // 1% tolerance
+      details.push({
+        key: wt.id,
+        expected: `≤${Math.round(usableArea)} mm²`,
+        actual: `${Math.round(usedArea)} mm²`,
+        message: `WT ${wt.id} überläuft: ${Math.round(usedArea)} mm² > ${Math.round(usableArea)} mm² nutzbar`,
+      });
     }
   }
-  return { id: 'C7', name: 'Flächenintegrität (kein Überlauf)', status: details.length === 0 ? 'PASS' : 'FAIL', errorCount: details.length, details };
+  return {
+    id: 'C7', name: 'Flächenintegrität (kein Überlauf)',
+    status: details.length === 0 ? 'PASS' : 'FAIL',
+    errorCount: details.length, details,
+  };
 }
 
 function checkC8_ConstraintEinhaltung(): HardCheckResult {
