@@ -71,6 +71,7 @@ export interface WTPosition {
   grundflaeche_mm2: number;
   gewicht_kg: number;
   abc_klasse: 'A' | 'B' | 'C';
+  breite_mm?: number;  // strip depth for balancing recalculation
 }
 
 export interface WT {
@@ -124,6 +125,8 @@ export interface ValidationResult {
   artikel_nicht_lagerfaehig: string[];    // Höhe > 320mm
   artikel_unvollstaendig: string[];       // Fehlende Maße/Gewicht
   artikel_ohne_match: string[];           // Bestellarchiv ohne Artikelliste-Match
+  fehlende_artikel?: Array<{ artikelnummer: string; bestand: number }>; // Bestand ohne Artikelliste
+  fehlende_bestand_gesamt?: number;       // Summe Bestand der fehlenden Artikel
 }
 
 // ============ OPTIMIZATION RESULT ============

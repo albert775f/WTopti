@@ -107,6 +107,8 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       artikel_nicht_lagerfaehig: phase1Result.validation.artikel_nicht_lagerfaehig,
       artikel_unvollstaendig: phase1Result.validation.artikel_unvollstaendig,
       artikel_ohne_match: phase1Result.validation.artikel_ohne_match,
+      fehlende_artikel: phase1Result.validation.fehlende_artikel,
+      fehlende_bestand_gesamt: phase1Result.validation.fehlende_bestand_gesamt,
     };
 
     const baseResult: OptimizationResult = {

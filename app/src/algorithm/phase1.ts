@@ -54,6 +54,18 @@ export function processPhase1(
     }
   }
 
+  // Detect bestand articles with stock but no Artikelliste entry (no dimensions available)
+  const fehlende_artikel: Array<{ artikelnummer: string; bestand: number }> = [];
+  for (const b of bestand) {
+    const artNr = String(b.artikelnummer);
+    if (!artikelSet.has(artNr) && b.bestand > 0) {
+      fehlende_artikel.push({ artikelnummer: artNr, bestand: b.bestand });
+    }
+  }
+  fehlende_artikel.sort((a, b) => b.bestand - a.bestand);
+  validation.fehlende_artikel = fehlende_artikel;
+  validation.fehlende_bestand_gesamt = fehlende_artikel.reduce((s, a) => s + a.bestand, 0);
+
   // Join and process articles
   const enriched: Array<{
     art: ArtikelData;
