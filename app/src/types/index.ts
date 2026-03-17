@@ -58,6 +58,7 @@ export interface WTConfig {
   teiler_modus: 'exact' | 'percent'; // legacy, strip model uses teiler_breite_mm
   co_occurrence_schwellwert: number; // default: 3
   a_artikel_scatter_n: number;    // default: 3 — split A-articles across n WTs
+  warehouse_area_m2: number;      // default: 1480.65 — total STOROJET rack floor area
 }
 
 // ============ WT + OUTPUT TYPES ============
@@ -106,19 +107,42 @@ export interface BelegungsplanRow {
 
 // ============ WT-RATIO RECOMMENDATION ============
 
+export interface ArticleCost {
+  artikelnummer: string;
+  bezeichnung: string;
+  bestand: number;
+  fits_klein: boolean;
+  items_per_klein: number;
+  n_klein: number;
+  area_cost_klein: number;   // m² floor space if stored on KLEIN
+  items_per_gross: number;
+  n_gross: number;
+  area_cost_gross: number;   // m² floor space if stored on GROSS
+  best_type: 'KLEIN' | 'GROSS';
+  area_saving: number;       // area_cost_klein - area_cost_gross (positive = GROSS saves floor space)
+  is_weight_limited: boolean; // items_per_klein === items_per_gross (weight cap dominates)
+}
+
 export interface WTRatioRecommendation {
+  warehouse_area_m2: number;
+  area_used_m2: number;
+  area_free_m2: number;
+  area_free_pct: number;
   available_klein: number;
   available_gross: number;
   optimal_klein_used: number;
   optimal_gross_used: number;
   klein_free: number;
   gross_free: number;
-  articles_on_klein: number;     // article types planned for KLEIN
-  articles_on_gross: number;     // article types planned for GROSS (efficiency + must)
-  articles_must_gross: number;   // article types that don't physically fit KLEIN
-  wts_if_all_klein: number;      // WTs needed if GROSS budget were 0
-  wts_optimal: number;           // WTs used with efficiency-based planning
-  klein_saved: number;           // wts_if_all_klein - wts_optimal
+  articles_on_klein: number;
+  articles_on_gross: number;
+  articles_must_gross: number;
+  articles_weight_limited: number;
+  articles_geometry_limited: number;
+  wts_if_all_klein: number;
+  wts_optimal: number;
+  klein_saved: number;
+  top_gross_examples: ArticleCost[];  // top 3 examples where GROSS saves most floor space
   empfehlung: string;
 }
 
@@ -167,6 +191,7 @@ export interface OptimizationResult {
   validation_dashboard?: ValidationDashboardData;
   coMatrix?: Record<string, Record<string, number>>;
   wt_recommendation?: WTRatioRecommendation;
+  article_costs?: ArticleCost[];
 }
 
 // ============ VALIDATION TYPES ============
