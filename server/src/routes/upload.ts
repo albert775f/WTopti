@@ -32,19 +32,19 @@ router.post('/static', upload.fields([
       // Insert artikel
       for (const a of artikelRows) {
         await client.query(
-          `INSERT INTO artikel (artikelnummer, bezeichnung, hoehe_mm, breite_mm, laenge_mm, gewicht_kg, volumen_l, grundflaeche_mm2, max_stapelhoehe)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          `INSERT INTO artikel (artikelnummer, bezeichnung, hoehe_mm, breite_mm, laenge_mm, gewicht_kg, volumen_l, grundflaeche_mm2, max_stapelhoehe, sperrgut)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            ON CONFLICT (artikelnummer) DO UPDATE SET
-             bezeichnung=$2, hoehe_mm=$3, breite_mm=$4, laenge_mm=$5, gewicht_kg=$6, volumen_l=$7, grundflaeche_mm2=$8, max_stapelhoehe=$9`,
-          [a.artikelnummer, a.bezeichnung, a.hoehe_mm, a.breite_mm, a.laenge_mm, a.gewicht_kg, a.volumen_l ?? null, a.grundflaeche_mm2, a.max_stapelhoehe]
+             bezeichnung=$2, hoehe_mm=$3, breite_mm=$4, laenge_mm=$5, gewicht_kg=$6, volumen_l=$7, grundflaeche_mm2=$8, max_stapelhoehe=$9, sperrgut=$10`,
+          [a.artikelnummer, a.bezeichnung, a.hoehe_mm, a.breite_mm, a.laenge_mm, a.gewicht_kg, a.volumen_l ?? null, a.grundflaeche_mm2, a.max_stapelhoehe, a.sperrgut ?? null]
         );
       }
 
       // Insert bestellungen
       for (const b of bestellungenRows) {
         await client.query(
-          `INSERT INTO bestellungen (belegnummer, artikelnummer, menge, datum) VALUES ($1,$2,$3,$4)`,
-          [b.belegnummer, b.artikelnummer, b.menge, b.datum ?? null]
+          `INSERT INTO bestellungen (belegnummer, artikelnummer, menge, datum, bezeichnung) VALUES ($1,$2,$3,$4,$5)`,
+          [b.belegnummer, b.artikelnummer, b.menge, b.datum ?? null, b.bezeichnung ?? null]
         );
       }
 

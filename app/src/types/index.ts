@@ -4,13 +4,14 @@
 export interface ArtikelData {
   artikelnummer: string;
   bezeichnung: string;
-  hoehe_mm: number;       // mm (converted from cm by backend)
-  breite_mm: number;      // mm
-  laenge_mm: number;      // mm
-  gewicht_kg: number;
+  hoehe_mm: number;       // mm (converted from cm by backend); 0 if missing in source
+  breite_mm: number;      // mm; 0 if missing in source
+  laenge_mm: number;      // mm; 0 if missing in source
+  gewicht_kg: number;     // 0 if missing in source
   volumen_l?: number;
   grundflaeche_mm2: number;   // breite_mm × laenge_mm (pre-computed by backend)
-  max_stapelhoehe: number;    // floor(320 / hoehe_mm) (pre-computed by backend)
+  max_stapelhoehe: number;    // floor(320 / hoehe_mm); 0 if hoehe_mm=0
+  sperrgut?: string;          // raw Sperrgut value from Excel, e.g. 'Lager B'
 }
 
 /** Bestellungen Sauber.xlsx – Sheet "Bestellungen"
@@ -165,6 +166,7 @@ export interface SzenarioResult {
 // ============ EXCLUSION LOG TYPES ============
 
 export type ExclusionReason =
+  | 'SPERRGUT'
   | 'HEIGHT_EXCEEDED'
   | 'WEIGHT_EXCEEDED'
   | 'DIMENSIONS_MISSING'

@@ -37,8 +37,8 @@ router.get('/status', async (_req, res) => {
 router.get('/data', async (_req, res) => {
   try {
     const [artikelResult, bestellungenResult, bestandResult] = await Promise.all([
-      pool.query('SELECT artikelnummer, bezeichnung, hoehe_mm, breite_mm, laenge_mm, gewicht_kg, volumen_l, grundflaeche_mm2, max_stapelhoehe FROM artikel'),
-      pool.query('SELECT artikelnummer, menge, belegnummer, datum FROM bestellungen'),
+      pool.query('SELECT artikelnummer, bezeichnung, hoehe_mm, breite_mm, laenge_mm, gewicht_kg, volumen_l, grundflaeche_mm2, max_stapelhoehe, sperrgut FROM artikel'),
+      pool.query('SELECT artikelnummer, menge, belegnummer, datum, bezeichnung FROM bestellungen'),
       pool.query('SELECT artikelnummer, bestand FROM bestand'),
     ]);
 
@@ -53,12 +53,14 @@ router.get('/data', async (_req, res) => {
         volumen_l: r.volumen_l ? parseFloat(r.volumen_l) : undefined,
         grundflaeche_mm2: parseFloat(r.grundflaeche_mm2),
         max_stapelhoehe: parseInt(r.max_stapelhoehe),
+        sperrgut: r.sperrgut ?? undefined,
       })),
       bestellungen: bestellungenResult.rows.map(r => ({
         artikelnummer: r.artikelnummer,
         menge: parseInt(r.menge),
         belegnummer: r.belegnummer,
         datum: r.datum,
+        bezeichnung: r.bezeichnung ?? undefined,
       })),
       bestand: bestandResult.rows.map(r => ({
         artikelnummer: r.artikelnummer,

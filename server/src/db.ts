@@ -39,6 +39,10 @@ export async function initDb(): Promise<void> {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    -- Migrations: add new columns to existing tables if not present
+    ALTER TABLE artikel ADD COLUMN IF NOT EXISTS sperrgut TEXT;
+    ALTER TABLE bestellungen ADD COLUMN IF NOT EXISTS bezeichnung TEXT;
   `);
 }
 

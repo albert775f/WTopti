@@ -14,13 +14,14 @@ function safeParseFloat(val: unknown): number | null {
 export interface ArtikelRow {
   artikelnummer: string;
   bezeichnung: string;
-  hoehe_mm: number;
-  breite_mm: number;
-  laenge_mm: number;
-  gewicht_kg: number;
+  hoehe_mm: number;        // 0 if missing/null in source
+  breite_mm: number;       // 0 if missing/null in source
+  laenge_mm: number;       // 0 if missing/null in source
+  gewicht_kg: number;      // 0 if missing/null in source
   volumen_l?: number;
   grundflaeche_mm2: number;
   max_stapelhoehe: number;
+  sperrgut?: string;       // raw Excel value, e.g. 'Lager B'; undefined if empty
 }
 
 export interface BestellungRow {
@@ -28,6 +29,7 @@ export interface BestellungRow {
   artikelnummer: string;
   menge: number;
   datum?: string;
+  bezeichnung?: string;    // for SON article detection in phase1
 }
 
 export interface BestandRow {
@@ -48,32 +50,24 @@ export function parseArtikel(buffer: Buffer): ArtikelRow[] {
     const artikelnummer = String(row['Nummer'] ?? '').trim();
     if (!artikelnummer) continue;
 
-    // Skip Sperrgut articles
-    const sperrgut = row['Sperrgut'];
-    if (sperrgut !== null && sperrgut !== undefined && String(sperrgut).trim() !== '') continue;
+    // Pass sperrgut through — filtering happens in frontend phase1
+    const sperrgutRaw = row['Sperrgut'];
+    const sperrgut = (sperrgutRaw !== null && sperrgutRaw !== undefined && String(sperrgutRaw).trim() !== '')
+      ? String(sperrgutRaw).trim()
+      : undefined;
 
-    const gewicht_kg = safeParseFloat(row['Gewicht in kg']);
-    // Skip articles with no weight or weight > 24kg
-    if (gewicht_kg === null || gewicht_kg <= 0 || gewicht_kg > 24) continue;
+    // Weight: null → 0 (frontend detects WEIGHT_MISSING / WEIGHT_EXCEEDED)
+    const gewicht_kg = safeParseFloat(row['Gewicht in kg']) ?? 0;
 
-    // Dimensions in cm → convert to mm (multiply by 10)
-    const hoehe_cm = safeParseFloat(row['Höhe_cm']);
-    const breite_cm = safeParseFloat(row['Breite_cm']);
-    const laenge_cm = safeParseFloat(row['Länge_cm']);
+    // Dimensions in cm → mm (×10); null/missing → 0 (frontend detects DIMENSIONS_MISSING)
+    const hoehe_mm = (safeParseFloat(row['Höhe_cm']) ?? 0) * 10;
+    const breite_mm = (safeParseFloat(row['Breite_cm']) ?? 0) * 10;
+    const laenge_mm = (safeParseFloat(row['Länge_cm']) ?? 0) * 10;
 
-    if (hoehe_cm === null || breite_cm === null || laenge_cm === null ||
-        hoehe_cm <= 0 || breite_cm <= 0 || laenge_cm <= 0) {
-      console.warn(`[parser] Skipping article ${artikelnummer}: invalid dimensions/weight`);
-      continue;
-    }
-
-    const hoehe_mm = hoehe_cm * 10;
-    const breite_mm = breite_cm * 10;
-    const laenge_mm = laenge_cm * 10;
+    const grundflaeche_mm2 = breite_mm * laenge_mm;
+    const max_stapelhoehe = hoehe_mm > 0 ? Math.floor(320 / hoehe_mm) : 0;
 
     const volumen_l = row['Volumen in Liter'] ? parseFloat(String(row['Volumen in Liter'])) : undefined;
-    const grundflaeche_mm2 = breite_mm * laenge_mm;
-    const max_stapelhoehe = Math.floor(320 / hoehe_mm);
 
     result.push({
       artikelnummer,
@@ -85,6 +79,7 @@ export function parseArtikel(buffer: Buffer): ArtikelRow[] {
       volumen_l,
       grundflaeche_mm2,
       max_stapelhoehe,
+      sperrgut,
     });
   }
 
@@ -121,7 +116,10 @@ export function parseBestellungen(buffer: Buffer): BestellungRow[] {
       }
     }
 
-    result.push({ belegnummer, artikelnummer, menge, datum });
+    const bezeichnungRaw = String(row['Bezeichnung'] ?? '').trim();
+    const bezeichnung = bezeichnungRaw || undefined;
+
+    result.push({ belegnummer, artikelnummer, menge, datum, bezeichnung });
   }
 
   return result;

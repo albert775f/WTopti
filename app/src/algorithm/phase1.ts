@@ -123,6 +123,16 @@ export function processPhase1(
 
     const bez = art.bezeichnung || '— unknown —';
 
+    // Priority 0: SPERRGUT (different storage zone, not plannable in STOROJET)
+    if (art.sperrgut) {
+      exclusionLog.push({
+        artikelnummer: artNr, bezeichnung: bez,
+        exclusion_reason: 'SPERRGUT', exclusion_phase: 'FILTER',
+        bestand: bestandVal, detail: `Sperrgut=${art.sperrgut}`,
+      });
+      continue;
+    }
+
     // Priority 1: HEIGHT_EXCEEDED
     if (art.hoehe_mm > config.hoehe_limit_mm) {
       validation.artikel_nicht_lagerfaehig.push(artNr);

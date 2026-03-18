@@ -19,6 +19,7 @@ import type { ArtikelProcessed, ExclusionLogEntry, ExclusionReason } from '../ty
 const ABC_COLORS: Record<string, string> = { A: '#22c55e', B: '#eab308', C: '#9ca3af' };
 
 const REASON_LABELS: Record<ExclusionReason, string> = {
+  SPERRGUT: 'Sperrgut (anderes Lager)',
   HEIGHT_EXCEEDED: 'Höhe überschreitet 320 mm',
   WEIGHT_EXCEEDED: 'Einzelgewicht überschreitet 24 kg',
   DIMENSIONS_MISSING: 'Maße unvollständig (= 0)',
@@ -28,7 +29,7 @@ const REASON_LABELS: Record<ExclusionReason, string> = {
 };
 
 const REASON_ORDER: ExclusionReason[] = [
-  'HEIGHT_EXCEEDED', 'WEIGHT_EXCEEDED', 'DIMENSIONS_MISSING',
+  'SPERRGUT', 'HEIGHT_EXCEEDED', 'WEIGHT_EXCEEDED', 'DIMENSIONS_MISSING',
   'WEIGHT_MISSING', 'NO_MASTER_RECORD', 'SON_ARTICLE',
 ];
 
