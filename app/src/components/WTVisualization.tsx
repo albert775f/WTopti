@@ -13,6 +13,29 @@ type ColorMode = 'cluster' | 'abc';
 // Stacks above this threshold are rendered as a single rect with grid overlay
 const COMPACT_THRESHOLD = 30;
 
+/**
+ * Mirrors phase3's zoneLayout: tries both footprint orientations, picks min depth.
+ * Returns effective dims (eL = along WT width, eB = along WT depth) and zone bounds.
+ */
+function pickZoneLayout(
+  laenge: number, breite: number, stacksNeeded: number, wtW: number,
+): { eL: number; eB: number; actualAcross: number; stackRows: number; zoneW: number; zoneH: number } {
+  const n = Math.max(1, stacksNeeded);
+  // Orientation 1: laenge along width
+  const a1 = laenge <= wtW ? Math.max(1, Math.min(n, Math.floor(wtW / laenge))) : 0;
+  const h1 = a1 > 0 ? Math.ceil(n / a1) * breite : Infinity;
+  // Orientation 2: breite along width (rotated)
+  const a2 = breite <= wtW ? Math.max(1, Math.min(n, Math.floor(wtW / breite))) : 0;
+  const h2 = a2 > 0 ? Math.ceil(n / a2) * laenge : Infinity;
+  if (a2 > 0 && h2 <= h1) {
+    return { eL: breite, eB: laenge, actualAcross: a2, stackRows: Math.ceil(n / a2), zoneW: a2 * breite, zoneH: h2 };
+  }
+  if (a1 > 0) {
+    return { eL: laenge, eB: breite, actualAcross: a1, stackRows: Math.ceil(n / a1), zoneW: a1 * laenge, zoneH: h1 };
+  }
+  return { eL: laenge, eB: breite, actualAcross: 1, stackRows: n, zoneW: laenge, zoneH: n * breite };
+}
+
 interface LayoutRect {
   x: number;
   y: number;
@@ -83,18 +106,15 @@ export default function WTVisualization() {
     const DIVIDER = 5;
     const WT_W = 500;
 
-    // Pre-compute zone dimensions for each position so we can sort before placement.
+    // Pre-compute zone dimensions (using same orientation logic as phase3's zoneLayout).
     const withDims = wt.positionen.map(pos => {
       const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
       const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
-      const maxAcross = Math.max(1, Math.floor(WT_W / laenge));
-      const actualAcross = Math.min(stacksNeeded, maxAcross);
-      const stackRows = Math.ceil(stacksNeeded / actualAcross);
-      const zoneW = actualAcross * laenge;
-      const zoneH = stackRows * breite;
-      return { pos, laenge, breite, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH };
+      const { eL, eB, actualAcross, stackRows, zoneW, zoneH } =
+        pickZoneLayout(laenge, breite, stacksNeeded, WT_W);
+      return { pos, eL, eB, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH };
     });
 
     // Sort ascending by zone height (shallowest first).
@@ -107,7 +127,7 @@ export default function WTVisualization() {
     const zoneList: ZoneInfo[] = [];
     let curX = 0, curY = 0, shelfH = 0;
 
-    for (const { pos, laenge, breite, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH } of withDims) {
+    for (const { pos, eL, eB, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH } of withDims) {
       // Wrap to new shelf if zone doesn't fit beside current zones
       if (curX > 0 && curX + DIVIDER + zoneW > WT_W) {
         curY += shelfH + DIVIDER;
@@ -138,9 +158,9 @@ export default function WTVisualization() {
             const stackItems = Math.min(remaining, maxStapel);
             remaining = Math.max(0, remaining - stackItems);
             rects.push({
-              x: curX + col * laenge,
-              y: curY + row * breite,
-              w: laenge, h: breite,
+              x: curX + col * eL,
+              y: curY + row * eB,
+              w: eL, h: eB,
               pos,
               stackIndex: row * actualAcross + col,
               stackItems,
