@@ -133,8 +133,9 @@ export function processPhase1(
       continue;
     }
 
-    // Priority 1: HEIGHT_EXCEEDED
-    if (art.hoehe_mm > config.hoehe_limit_mm) {
+    // Priority 1: HEIGHT_EXCEEDED — only exclude if ALL dimensions exceed limit
+    // (rotation may allow placement if at least one dimension ≤ hoehe_limit_mm)
+    if (Math.min(art.hoehe_mm, art.breite_mm, art.laenge_mm) > config.hoehe_limit_mm) {
       validation.artikel_nicht_lagerfaehig.push(artNr);
       exclusionLog.push({
         artikelnummer: artNr, bezeichnung: bez,
