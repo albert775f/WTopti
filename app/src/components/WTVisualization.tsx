@@ -83,36 +83,31 @@ export default function WTVisualization() {
     const DIVIDER = 5;
     const WT_W = 500;
 
-    // Sort by zone footprint area descending (FFD — matches packing order)
-    const sorted = [...wt.positionen].sort((a, b) => {
-      const aMaxStapel = Math.max(1, a.max_stapelhoehe ?? 1);
-      const bMaxStapel = Math.max(1, b.max_stapelhoehe ?? 1);
-      const aStacks = Math.ceil(a.stueckzahl / aMaxStapel);
-      const bStacks = Math.ceil(b.stueckzahl / bMaxStapel);
-      const aL = a.laenge_mm ?? Math.sqrt(a.grundflaeche_mm2);
-      const bL = b.laenge_mm ?? Math.sqrt(b.grundflaeche_mm2);
-      const aB = a.breite_mm ?? Math.sqrt(a.grundflaeche_mm2);
-      const bB = b.breite_mm ?? Math.sqrt(b.grundflaeche_mm2);
-      return (bStacks * bL * bB) - (aStacks * aL * aB);
-    });
-
-    const rects: LayoutRect[] = [];
-    const zoneList: ZoneInfo[] = [];
-    let curX = 0, curY = 0, shelfH = 0;
-
-    for (const pos of sorted) {
+    // Pre-compute zone dimensions for each position so we can sort before placement.
+    const withDims = wt.positionen.map(pos => {
       const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
       const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
-
-      // zoneLayout: l along WT width (laenge_mm is h1_mm, fits WT_W by construction)
       const maxAcross = Math.max(1, Math.floor(WT_W / laenge));
       const actualAcross = Math.min(stacksNeeded, maxAcross);
       const stackRows = Math.ceil(stacksNeeded / actualAcross);
       const zoneW = actualAcross * laenge;
       const zoneH = stackRows * breite;
+      return { pos, laenge, breite, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH };
+    });
 
+    // Sort ascending by zone height (shallowest first).
+    // Placing short zones early leaves maximum depth for tall zones — avoids
+    // the case where a single tall zone (e.g. 780/800mm) pushes all other
+    // positions out of the visible WT area.
+    withDims.sort((a, b) => a.zoneH - b.zoneH);
+
+    const rects: LayoutRect[] = [];
+    const zoneList: ZoneInfo[] = [];
+    let curX = 0, curY = 0, shelfH = 0;
+
+    for (const { pos, laenge, breite, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH } of withDims) {
       // Wrap to new shelf if zone doesn't fit beside current zones
       if (curX > 0 && curX + DIVIDER + zoneW > WT_W) {
         curY += shelfH + DIVIDER;
@@ -120,8 +115,8 @@ export default function WTVisualization() {
         shelfH = 0;
       }
 
-      // Stop if zone overflows WT depth
-      if (curY + zoneH > realDepth) break;
+      // Skip (don't stop) if zone overflows WT depth — continue to try remaining zones
+      if (curY + zoneH > realDepth) continue;
 
       zoneList.push({ x: curX, y: curY, w: zoneW, h: zoneH });
 
@@ -131,8 +126,7 @@ export default function WTVisualization() {
         rects.push({
           x: curX, y: curY, w: zoneW, h: zoneH,
           pos, stackIndex: -1, stackItems: pos.stueckzahl, totalStacks: stacksNeeded,
-          compact: true, zoneW, zoneH,
-          gridCols: actualAcross, gridRows: stackRows,
+          compact: true, zoneW, zoneH, gridCols: actualAcross, gridRows: stackRows,
         });
       } else {
         let remaining = pos.stueckzahl;
@@ -151,8 +145,7 @@ export default function WTVisualization() {
               stackIndex: row * actualAcross + col,
               stackItems,
               totalStacks: stacksNeeded,
-              compact: false, zoneW, zoneH,
-              gridCols: actualAcross, gridRows: stackRows,
+              compact: false, zoneW, zoneH, gridCols: actualAcross, gridRows: stackRows,
             });
           }
         }
