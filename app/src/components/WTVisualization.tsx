@@ -10,16 +10,41 @@ const ABC_COLORS: Record<string, string> = { A: '#22c55e', B: '#eab308', C: '#9c
 
 type ColorMode = 'cluster' | 'abc';
 
+// Max stacks to render individually; beyond this, show compact zone + label
+const COMPACT_THRESHOLD = 20;
+
+interface LayoutRect {
+  x: number;
+  y: number;
+  w: number;           // laenge_mm (or b-orientation width)
+  h: number;           // breite_mm (or b-orientation height)
+  pos: WTPosition;
+  stackIndex: number;  // 0-based index within zone
+  stackItems: number;  // items in this stack
+  totalStacks: number; // total stacks in zone
+  compact: boolean;    // true when zone has >COMPACT_THRESHOLD stacks (one rect for whole zone)
+  zoneW: number;       // full zone width (for compact label rendering)
+  zoneH: number;       // full zone height
+}
+
+interface ZoneInfo {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export default function WTVisualization() {
   const { result } = useAppState();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [colorMode, setColorMode] = useState<ColorMode>('abc');
   const [search, setSearch] = useState('');
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; pos: WTPosition } | null>(null);
+  const [tooltip, setTooltip] = useState<{
+    x: number; y: number; pos: WTPosition; stackInfo: string;
+  } | null>(null);
 
   const wts = result?.wts ?? [];
 
-  // Search: jump to first matching WT
   const handleSearch = () => {
     if (!search.trim()) return;
     const q = search.toLowerCase();
@@ -46,13 +71,12 @@ export default function WTVisualization() {
   const svgH = isKlein ? 250 : 400;
   const scale = svgW / 500;
 
-  // 2D zone layout: shelf-based packing
-  const layoutRects = useMemo(() => {
-    if (!wt) return [];
-    const DIVIDER = 5; // mm
-    const WT_W = 500;  // mm
+  // Compute per-stack rects and zone bounds for dividers
+  const { stackRects, zones } = useMemo(() => {
+    if (!wt) return { stackRects: [] as LayoutRect[], zones: [] as ZoneInfo[] };
+    const DIVIDER = 5;
+    const WT_W = 500;
 
-    // Sort positions by zone area descending (largest zones first)
     const sorted = [...wt.positionen].sort((a, b) => {
       const aMaxStapel = Math.max(1, a.max_stapelhoehe ?? 1);
       const bMaxStapel = Math.max(1, b.max_stapelhoehe ?? 1);
@@ -65,7 +89,8 @@ export default function WTVisualization() {
       return (bStacks * bL * bB) - (aStacks * aL * aB);
     });
 
-    const rects: { x: number; y: number; w: number; h: number; pos: WTPosition }[] = [];
+    const rects: LayoutRect[] = [];
+    const zoneList: ZoneInfo[] = [];
     let curX = 0, curY = 0, shelfH = 0;
 
     for (const pos of sorted) {
@@ -74,28 +99,62 @@ export default function WTVisualization() {
       const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
       const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
 
-      // Arrange stacks in a shelf: as many as fit across the WT width
+      // Layout zone: l along width direction (orientation 1)
       const maxAcross = Math.max(1, Math.floor(WT_W / laenge));
       const actualAcross = Math.min(stacksNeeded, maxAcross);
       const stackRows = Math.ceil(stacksNeeded / actualAcross);
       const zoneW = actualAcross * laenge;
       const zoneH = stackRows * breite;
 
-      // If zone doesn't fit in current shelf, start a new shelf
+      // Start new shelf if zone doesn't fit
       if (curX > 0 && curX + DIVIDER + zoneW > WT_W) {
         curY += shelfH + DIVIDER;
         curX = 0;
         shelfH = 0;
       }
 
-      rects.push({ x: curX, y: curY, w: zoneW, h: zoneH, pos });
+      if (curY + zoneH >= realDepth) break;
+
+      zoneList.push({ x: curX, y: curY, w: zoneW, h: zoneH });
+
+      const compact = stacksNeeded > COMPACT_THRESHOLD;
+
+      if (compact) {
+        // Single rect representing the entire zone
+        rects.push({
+          x: curX, y: curY, w: zoneW, h: zoneH,
+          pos, stackIndex: 0, stackItems: pos.stueckzahl, totalStacks: stacksNeeded,
+          compact: true, zoneW, zoneH,
+        });
+      } else {
+        // Emit one rect per stack
+        let remaining = pos.stueckzahl;
+        for (let row = 0; row < stackRows; row++) {
+          const stacksThisRow = row < stackRows - 1
+            ? actualAcross
+            : stacksNeeded - row * actualAcross;
+          for (let col = 0; col < stacksThisRow; col++) {
+            const stackItems = Math.min(remaining, maxStapel);
+            remaining = Math.max(0, remaining - stackItems);
+            rects.push({
+              x: curX + col * laenge,
+              y: curY + row * breite,
+              w: laenge, h: breite,
+              pos,
+              stackIndex: row * actualAcross + col,
+              stackItems,
+              totalStacks: stacksNeeded,
+              compact: false, zoneW, zoneH,
+            });
+          }
+        }
+      }
+
       curX += zoneW + DIVIDER;
       shelfH = Math.max(shelfH, zoneH);
-
-      if (curY + zoneH >= realDepth) break;
     }
 
-    return rects;
+    return { stackRects: rects, zones: zoneList };
   }, [wt, realDepth]);
 
   function getColor(pos: WTPosition): string {
@@ -104,7 +163,6 @@ export default function WTVisualization() {
     return CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
   }
 
-  // Weight progress bar
   const gewichtPct = wt ? (wt.gesamtgewicht_kg / 24) * 100 : 0;
   const gewichtColor = wt
     ? wt.gesamtgewicht_kg > 24 ? '#ef4444'
@@ -156,32 +214,52 @@ export default function WTVisualization() {
           </div>
 
           <svg width={svgW} height={svgH} className="border border-gray-300 bg-gray-50 rounded">
-            {layoutRects.map((r, i) => (
+            {/* Stack rectangles */}
+            {stackRects.map((r, i) => (
               <rect key={i}
                 x={r.x * scale} y={r.y * scale}
                 width={Math.max(1, r.w * scale)} height={Math.max(1, r.h * scale)}
-                fill={getColor(r.pos)} stroke="#fff" strokeWidth={0.5} rx={1}
-                opacity={0.85}
-                onMouseEnter={(e) => setTooltip({ x: e.clientX, y: e.clientY, pos: r.pos })}
+                fill={getColor(r.pos)}
+                stroke="#fff" strokeWidth={0.5}
+                rx={1} opacity={0.85}
+                onMouseEnter={(e) => setTooltip({
+                  x: e.clientX, y: e.clientY,
+                  pos: r.pos,
+                  stackInfo: r.compact
+                    ? `${r.totalStacks} Stapel gesamt · ${r.stackItems} Stk`
+                    : `Stapel ${r.stackIndex + 1}/${r.totalStacks} · ${r.stackItems} Stk`,
+                })}
                 onMouseLeave={() => setTooltip(null)}
               />
             ))}
-            {/* Zone dividers: vertical within shelves, horizontal between shelves */}
-            {layoutRects.map((r, i) => {
-              const next = layoutRects[i + 1];
+
+            {/* Compact zone labels (>COMPACT_THRESHOLD stacks) */}
+            {stackRects.filter(r => r.compact).map((r, i) => (
+              <text key={`lbl-${i}`}
+                x={(r.x + r.zoneW / 2) * scale}
+                y={(r.y + r.zoneH / 2) * scale}
+                textAnchor="middle" dominantBaseline="middle"
+                fontSize={9} fill="#fff" fontWeight="bold" pointerEvents="none">
+                {r.totalStacks} Stapel
+              </text>
+            ))}
+
+            {/* Zone dividers: dashed lines at article-zone boundaries only */}
+            {zones.map((z, i) => {
+              const next = zones[i + 1];
               if (!next) return null;
-              const sameShelves = Math.abs(r.y - next.y) < 1;
+              const sameShelves = Math.abs(z.y - next.y) < 1;
               if (!sameShelves) {
-                // Horizontal divider between shelves: span width of the wider adjacent shelf
-                const lineY = (r.y + r.h + 2.5) * scale;
-                const shelfMaxX = Math.max(r.x + r.w, next.x + next.w) * scale;
+                // Horizontal line between shelves
+                const lineY = (z.y + z.h + 2.5) * scale;
+                const shelfMaxX = Math.max(z.x + z.w, next.x + next.w) * scale;
                 return <line key={`d-${i}`} x1={0} y1={lineY} x2={shelfMaxX} y2={lineY}
-                  stroke="#94a3b8" strokeWidth={0.5} strokeDasharray="3,2" />;
+                  stroke="#94a3b8" strokeWidth={1} strokeDasharray="3,2" />;
               }
-              // Vertical divider between zones in same shelf
-              const lineX = (r.x + r.w + 2.5) * scale;
-              return <line key={`d-${i}`} x1={lineX} y1={r.y * scale} x2={lineX} y2={(r.y + r.h) * scale}
-                stroke="#94a3b8" strokeWidth={0.5} strokeDasharray="3,2" />;
+              // Vertical line between zones on same shelf
+              const lineX = (z.x + z.w + 2.5) * scale;
+              return <line key={`d-${i}`} x1={lineX} y1={z.y * scale} x2={lineX} y2={(z.y + z.h) * scale}
+                stroke="#94a3b8" strokeWidth={1} strokeDasharray="3,2" />;
             })}
           </svg>
 
@@ -200,10 +278,11 @@ export default function WTVisualization() {
           {/* Tooltip */}
           {tooltip && (
             <div className="fixed bg-gray-900 text-white text-xs px-3 py-2 rounded pointer-events-none z-50"
-              style={{ left: tooltip.x + 10, top: tooltip.y - 40 }}>
+              style={{ left: tooltip.x + 10, top: tooltip.y - 50 }}>
               <p className="font-semibold">{tooltip.pos.bezeichnung}</p>
-              <p>{tooltip.pos.artikelnummer} | {tooltip.pos.laenge_mm ?? '?'}x{tooltip.pos.breite_mm ?? '?'} mm</p>
-              <p>{tooltip.pos.gewicht_kg.toFixed(2)} kg | {tooltip.pos.stueckzahl} Stk | h&le;{Math.max(1, tooltip.pos.max_stapelhoehe ?? 1)}x</p>
+              <p>{tooltip.pos.artikelnummer} | {tooltip.pos.laenge_mm ?? '?'}&#215;{tooltip.pos.breite_mm ?? '?'} mm</p>
+              <p>{tooltip.pos.gewicht_kg.toFixed(2)} kg | {tooltip.pos.stueckzahl} Stk | h&#8804;{Math.max(1, tooltip.pos.max_stapelhoehe ?? 1)}x</p>
+              <p className="text-blue-300 mt-0.5">{tooltip.stackInfo}</p>
             </div>
           )}
         </div>
@@ -214,17 +293,22 @@ export default function WTVisualization() {
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <h3 className="text-sm font-semibold text-gray-700 mb-2">Positionen auf {wt.id}</h3>
           <div className="space-y-1 text-sm">
-            {wt.positionen.map((p, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <span className={`px-1.5 py-0.5 rounded text-xs font-bold text-white ${
-                  p.abc_klasse === 'A' ? 'bg-green-500' : p.abc_klasse === 'B' ? 'bg-yellow-500' : 'bg-gray-400'
-                }`}>{p.abc_klasse}</span>
-                <span className="font-mono">{p.artikelnummer}</span>
-                <span className="text-gray-500 truncate flex-1">{p.bezeichnung}</span>
-                <span className="text-gray-600">{p.stueckzahl} Stk</span>
-                <span className="text-gray-600">{p.gewicht_kg.toFixed(2)} kg</span>
-              </div>
-            ))}
+            {wt.positionen.map((p, i) => {
+              const maxStapel = Math.max(1, p.max_stapelhoehe ?? 1);
+              const stacks = Math.ceil(p.stueckzahl / maxStapel);
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <span className={`px-1.5 py-0.5 rounded text-xs font-bold text-white ${
+                    p.abc_klasse === 'A' ? 'bg-green-500' : p.abc_klasse === 'B' ? 'bg-yellow-500' : 'bg-gray-400'
+                  }`}>{p.abc_klasse}</span>
+                  <span className="font-mono">{p.artikelnummer}</span>
+                  <span className="text-gray-500 truncate flex-1">{p.bezeichnung}</span>
+                  <span className="text-gray-600">{p.stueckzahl} Stk</span>
+                  <span className="text-gray-400 text-xs">{stacks} Stapel</span>
+                  <span className="text-gray-600">{p.gewicht_kg.toFixed(2)} kg</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
