@@ -172,9 +172,10 @@ export default function WTVisualization() {
               if (!next) return null;
               const sameShelves = Math.abs(r.y - next.y) < 1;
               if (!sameShelves) {
-                // Horizontal divider between shelves
+                // Horizontal divider between shelves: span width of the wider adjacent shelf
                 const lineY = (r.y + r.h + 2.5) * scale;
-                return <line key={`d-${i}`} x1={0} y1={lineY} x2={svgW} y2={lineY}
+                const shelfMaxX = Math.max(r.x + r.w, next.x + next.w) * scale;
+                return <line key={`d-${i}`} x1={0} y1={lineY} x2={shelfMaxX} y2={lineY}
                   stroke="#94a3b8" strokeWidth={0.5} strokeDasharray="3,2" />;
               }
               // Vertical divider between zones in same shelf

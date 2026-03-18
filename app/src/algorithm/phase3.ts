@@ -394,12 +394,34 @@ export function processPhase3(
       const idx = wt.positionen.indexOf(lightest);
       if (idx >= 0) {
         wt.positionen.splice(idx, 1);
-        tgtState.wt.positionen.push(lightest);
+        const existingOnTarget = tgtState.wt.positionen.find(
+          p => p.artikelnummer === lightest.artikelnummer,
+        );
+        if (existingOnTarget) {
+          existingOnTarget.stueckzahl += lightest.stueckzahl;
+        } else {
+          tgtState.wt.positionen.push(lightest);
+        }
         updateWTMetrics(srcState, config);
         updateWTMetrics(tgtState, config);
         break;
       }
     }
+  }
+
+  // Post-processing safety net: merge any remaining duplicate positions
+  for (const state of allWTStates) {
+    const merged: WTPosition[] = [];
+    for (const pos of state.wt.positionen) {
+      const existing = merged.find(p => p.artikelnummer === pos.artikelnummer);
+      if (existing) {
+        existing.stueckzahl += pos.stueckzahl;
+      } else {
+        merged.push({ ...pos });
+      }
+    }
+    state.wt.positionen = merged;
+    updateWTMetrics(state, config);
   }
 
   return allWTStates.map(s => s.wt);
