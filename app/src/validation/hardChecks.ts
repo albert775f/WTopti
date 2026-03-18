@@ -107,11 +107,11 @@ function checkC6_KeineLeereWTs(wts: WT[]): HardCheckResult {
 
 function checkC7_FlaechenIntegritaet(wts: WT[]): HardCheckResult {
   const details: HardCheckDetail[] = [];
-  const AREA_USABLE_FRACTION = 0.92;
 
   for (const wt of wts) {
     const wtArea = wt.typ === 'KLEIN' ? 250000 : 400000;
-    const usableArea = wtArea * AREA_USABLE_FRACTION;
+    // Shelf model (canFitNewZone/placeNewZone) guarantees geometric validity —
+    // no AREA_USABLE_FRACTION safety fraction needed.
 
     let usedArea = 0;
     for (const pos of wt.positionen) {
@@ -122,7 +122,7 @@ function checkC7_FlaechenIntegritaet(wts: WT[]): HardCheckResult {
       usedArea += stacksNeeded * laenge * breite;
     }
 
-    if (usedArea > usableArea * 1.01) { // 1% tolerance
+    if (usedArea > wtArea * 1.01) { // 1% tolerance
       details.push({
         key: wt.id,
         expected: `≤${Math.round(usableArea)} mm²`,

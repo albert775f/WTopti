@@ -208,7 +208,7 @@ function createWT(id: string, typ: WTTyp, clusterId: number): WT {
     id, typ, positionen: [], cluster_id: clusterId,
     gesamtgewicht_kg: 0,
     flaeche_brutto_mm2: area,
-    flaeche_netto_mm2: Math.round(area * AREA_USABLE_FRACTION),
+    flaeche_netto_mm2: area, // shelf model guarantees geometric validity — no fraction needed
     flaeche_netto_pct: 0,
     anzahl_teiler: 0,
     gewicht_status: 'ok',
