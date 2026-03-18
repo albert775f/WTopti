@@ -94,6 +94,17 @@ export function bestArticleOrientation(
 }
 
 /**
+ * How many more items can be added to an existing zone WITHOUT requiring
+ * additional stacks (i.e. without growing the zone's physical shelf footprint).
+ * Only items that fit within the already-allocated stack count are allowed.
+ */
+function maxExpandable(pos: WTPosition): number {
+  const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
+  const allocatedStacks = Math.ceil(pos.stueckzahl / maxStapel);
+  return allocatedStacks * maxStapel - pos.stueckzahl;
+}
+
+/**
  * Capacity check for an already-placed position (WTPosition proxy).
  * Used in consolidation and weight balancing where we only have
  * effective dims (stored in breite_mm/laenge_mm/max_stapelhoehe).
@@ -433,9 +444,8 @@ function consolidateUnderfilled(
         const existingOnTgt = tgt.wt.positionen.find(p => p.artikelnummer === pos.artikelnummer);
 
         if (existingOnTgt) {
-          // Expanding existing zone: check total ≤ WT capacity using effective dims
-          const maxCap = itemsFromPosition(pos, tgt.wtWidth, tgt.wtDepth, config.gewicht_hard_kg);
-          if (existingOnTgt.stueckzahl + pos.stueckzahl > maxCap) continue;
+          // Only merge if pos fits within the zone's already-allocated stacks
+          if (maxExpandable(existingOnTgt) < pos.stueckzahl) continue;
 
           existingOnTgt.stueckzahl += pos.stueckzahl;
         } else {
@@ -542,8 +552,9 @@ export function processPhase3(
             );
 
             if (existingPos) {
-              // Expanding existing zone
-              const maxExpand = maxPerWT - existingPos.stueckzahl;
+              // Expanding existing zone — only within already-allocated stacks
+              // (adding stacks would change the zone's shelf footprint, which is not tracked)
+              const maxExpand = maxExpandable(existingPos);
               if (maxExpand <= 0) continue;
               const actualPlace = Math.min(remaining, maxByWeight, maxExpand);
               if (actualPlace <= 0) continue;
@@ -681,9 +692,8 @@ export function processPhase3(
       const existingOnTarget = tgtState.wt.positionen.find(p => p.artikelnummer === lightest.artikelnummer);
 
       if (existingOnTarget) {
-        // Check capacity using effective dims from the position
-        const maxCap = itemsFromPosition(lightest, tgtState.wtWidth, tgtState.wtDepth, config.gewicht_hard_kg);
-        if (existingOnTarget.stueckzahl + lightest.stueckzahl > maxCap) continue;
+        // Only merge if lightest fits within the zone's already-allocated stacks
+        if (maxExpandable(existingOnTarget) < lightest.stueckzahl) continue;
       } else {
         if (!canFitNewZone(tgtState, zoneW, zoneH)) continue;
       }

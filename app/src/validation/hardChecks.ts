@@ -51,13 +51,19 @@ function checkC2_GewichtHardLimit(wts: WT[]): HardCheckResult {
 }
 
 function checkC3_HoehenLimit(wts: WT[], artikel: ArtikelData[]): HardCheckResult {
+  // After Bug 16 (3D orientation), any dimension can be vertical.
+  // An article is placeable iff at least one dimension ≤ 320 mm.
+  // Check: min(h, b, l) > 320 means truly unplaceable (should have been filtered).
   const artMap = new Map(artikel.map(a => [a.artikelnummer, a]));
   const details: HardCheckDetail[] = [];
   for (const wt of wts) {
     for (const pos of wt.positionen) {
       const art = artMap.get(pos.artikelnummer);
-      if (art && art.hoehe_mm > 320) {
-        details.push({ key: pos.artikelnummer, expected: '≤320 mm', actual: `${art.hoehe_mm} mm`, message: `Artikel ${pos.artikelnummer} überschreitet 320 mm` });
+      if (art) {
+        const minDim = Math.min(art.hoehe_mm, art.breite_mm, art.laenge_mm);
+        if (minDim > 320) {
+          details.push({ key: pos.artikelnummer, expected: '≤320 mm (min. Dim.)', actual: `${minDim} mm`, message: `Artikel ${pos.artikelnummer}: Mindestdimension ${minDim} mm > 320 mm` });
+        }
       }
     }
   }
