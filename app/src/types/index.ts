@@ -21,6 +21,7 @@ export interface BestellungData {
   artikelnummer: string;
   menge: number;
   belegnummer: string;
+  bezeichnung?: string; // optional — used for SON article detection if server sends it
 }
 
 /** Bestandsliste 13.03.2026.xls – Sheet "2026-03-13"
@@ -53,9 +54,9 @@ export interface WTConfig {
   gewicht_hard_kg: number;        // default: 24
   gewicht_soft_kg: number;        // default: 20
   hoehe_limit_mm: number;         // default: 320
-  teiler_breite_mm: number;       // default: 5
-  teiler_verlust_prozent: number; // default: 2 (legacy, not used by strip model)
-  teiler_modus: 'exact' | 'percent'; // legacy, strip model uses teiler_breite_mm
+  teiler_breite_mm: number;          // hardcoded 5 mm — not configurable (spec §6)
+  teiler_verlust_prozent?: number;   // legacy, removed from UI
+  teiler_modus?: 'exact' | 'percent'; // legacy, removed from UI
   co_occurrence_schwellwert: number; // default: 3
   a_artikel_scatter_n: number;    // default: 3 — split A-articles across n WTs
   warehouse_area_m2: number;      // default: 1480.65 — total STOROJET rack floor area
@@ -161,6 +162,25 @@ export interface SzenarioResult {
   empfehlung: string;
 }
 
+// ============ EXCLUSION LOG TYPES ============
+
+export type ExclusionReason =
+  | 'HEIGHT_EXCEEDED'
+  | 'WEIGHT_EXCEEDED'
+  | 'DIMENSIONS_MISSING'
+  | 'WEIGHT_MISSING'
+  | 'NO_MASTER_RECORD'
+  | 'SON_ARTICLE';
+
+export interface ExclusionLogEntry {
+  artikelnummer: string;
+  bezeichnung: string;           // "— unknown —" if not available
+  exclusion_reason: ExclusionReason;
+  exclusion_phase: 'FILTER' | 'VALIDATION';
+  bestand: number;               // 0 for SON articles (no physical stock)
+  detail: string;                // e.g. "Height_mm=510"
+}
+
 // ============ VALIDIERUNGSERGEBNIS ============
 
 export interface ValidationResult {
@@ -171,6 +191,7 @@ export interface ValidationResult {
   artikel_ohne_match: string[];           // Bestellarchiv ohne Artikelliste-Match
   fehlende_artikel?: Array<{ artikelnummer: string; bestand: number }>; // Bestand ohne Artikelliste
   fehlende_bestand_gesamt?: number;       // Summe Bestand der fehlenden Artikel
+  exclusion_log?: ExclusionLogEntry[];    // All excluded articles with reason
 }
 
 // ============ OPTIMIZATION RESULT ============

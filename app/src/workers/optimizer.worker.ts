@@ -55,7 +55,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       progress: 20,
     } satisfies WorkerMessage);
 
-    const phase2Result = processPhase2(phase1Result.processed, bestellungen, config);
+    const phase2Result = processPhase2(phase1Result.processed, phase1Result.filteredBestellungen, config);
     self.postMessage({ type: 'progress', phase: 2, progress: 40 } satisfies WorkerMessage);
 
     self.postMessage({
@@ -116,6 +116,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       artikel_ohne_match: phase1Result.validation.artikel_ohne_match,
       fehlende_artikel: phase1Result.validation.fehlende_artikel,
       fehlende_bestand_gesamt: phase1Result.validation.fehlende_bestand_gesamt,
+      exclusion_log: phase1Result.validation.exclusion_log,
     };
 
     const baseResult: OptimizationResult = {
@@ -135,7 +136,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
 
     const runPipeline = (cfg: WTConfig): OptimizationResult => {
       const r1 = processPhase1(artikel, bestellungen, bestand, cfg);
-      const r2 = processPhase2(r1.processed, bestellungen, cfg);
+      const r2 = processPhase2(r1.processed, r1.filteredBestellungen, cfg);
       const w = processPhase3(r1.processed, r2, cfg);
       return { ...baseResult, wts: w };
     };
@@ -150,9 +151,9 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     // Compute validation dashboard
     const { wts: baselineWTs } = calculateBaseline(phase1Result.processed, config);
     const hardChecks = runHardChecks(wts, artikel, bestand);
-    const orderSimulation = runOrderSimulation(bestellungen, wts, baselineWTs);
+    const orderSimulation = runOrderSimulation(phase1Result.filteredBestellungen, wts, baselineWTs);
     const metricsRaw = calculateMetrics(
-      wts, baselineWTs, phase1Result.processed, bestellungen,
+      wts, baselineWTs, phase1Result.processed, phase1Result.filteredBestellungen,
       phase2Result.coMatrix, DEFAULT_THRESHOLDS,
       orderSimulation.meanPicks, orderSimulation.baselineMeanPicks,
     );

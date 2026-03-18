@@ -57,8 +57,6 @@ const DEFAULT_CONFIG: WTConfig = {
   gewicht_soft_kg: 20,
   hoehe_limit_mm: 320,
   teiler_breite_mm: 5,
-  teiler_verlust_prozent: 2,
-  teiler_modus: 'percent',
   co_occurrence_schwellwert: 3,
   a_artikel_scatter_n: 3,
   warehouse_area_m2: 1480.65,

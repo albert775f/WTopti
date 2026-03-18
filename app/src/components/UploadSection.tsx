@@ -126,29 +126,8 @@ function ConfigPanel() {
             className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
           <span className="text-xs text-gray-400">STOROJET Rack-Gesamtfläche</span>
         </label>
-        <div className="col-span-2 md:col-span-3">
-          <span className="text-gray-600 text-sm">Teiler-Modus</span>
-          <div className="flex items-center gap-4 mt-1">
-            <label className="flex items-center gap-1">
-              <input type="radio" name="teiler" checked={config.teiler_modus === 'percent'}
-                onChange={() => update({ teiler_modus: 'percent' })} />
-              <span className="text-sm">Pauschal {config.teiler_verlust_prozent}%</span>
-            </label>
-            <label className="flex items-center gap-1">
-              <input type="radio" name="teiler" checked={config.teiler_modus === 'exact'}
-                onChange={() => update({ teiler_modus: 'exact' })} />
-              <span className="text-sm">Exakt ({config.teiler_breite_mm} mm)</span>
-            </label>
-          </div>
-          {config.teiler_modus === 'percent' ? (
-            <input type="number" value={config.teiler_verlust_prozent}
-              onChange={(e) => update({ teiler_verlust_prozent: +e.target.value })}
-              className="mt-1 w-24 rounded border-gray-300 border px-2 py-1 text-sm" />
-          ) : (
-            <input type="number" value={config.teiler_breite_mm}
-              onChange={(e) => update({ teiler_breite_mm: +e.target.value })}
-              className="mt-1 w-24 rounded border-gray-300 border px-2 py-1 text-sm" />
-          )}
+        <div className="block">
+          <span className="text-gray-500 text-xs">Teilerbreite: <strong>5 mm</strong> (fest)</span>
         </div>
       </div>
     </div>
