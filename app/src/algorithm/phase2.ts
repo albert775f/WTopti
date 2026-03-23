@@ -122,6 +122,66 @@ export function processPhase2(
     }
   }
 
+  // F10: Break up mega-clusters (> MAX_CLUSTER_ARTICLES articles) via greedy co-occurrence BFS
+  const MAX_CLUSTER_ARTICLES = 50;
+  const clusterArticlesMap = new Map<number, string[]>();
+  for (const [artNr, cid] of clusters) {
+    if (!clusterArticlesMap.has(cid)) clusterArticlesMap.set(cid, []);
+    clusterArticlesMap.get(cid)!.push(artNr);
+  }
+
+  for (const [origCid, articles] of clusterArticlesMap) {
+    if (articles.length <= MAX_CLUSTER_ARTICLES) continue;
+
+    // Sort by degree within cluster descending (most connected first)
+    const degreeIn = (artNr: string): number => {
+      const nb = coMatrix[artNr];
+      if (!nb) return 0;
+      let d = 0;
+      for (const other of articles) {
+        if ((nb[other] ?? 0) >= schwellwert) d++;
+      }
+      return d;
+    };
+    const sorted = [...articles].sort((a, b) => degreeIn(b) - degreeIn(a));
+
+    const remaining = new Set(sorted);
+    const groups: string[][] = [];
+
+    while (remaining.size > 0) {
+      const seed = sorted.find(a => remaining.has(a))!;
+      const group: string[] = [seed];
+      remaining.delete(seed);
+
+      // BFS: expand via highest-weight edges, up to MAX_CLUSTER_ARTICLES
+      const queue = [seed];
+      while (queue.length > 0 && group.length < MAX_CLUSTER_ARTICLES) {
+        const curr = queue.shift()!;
+        const nb = coMatrix[curr];
+        if (!nb) continue;
+        const candidates = Object.entries(nb)
+          .filter(([nbr, w]) => remaining.has(nbr) && w >= schwellwert)
+          .sort(([, a], [, b]) => b - a);
+        for (const [nbr] of candidates) {
+          if (group.length >= MAX_CLUSTER_ARTICLES) break;
+          if (!remaining.has(nbr)) continue;
+          group.push(nbr);
+          remaining.delete(nbr);
+          queue.push(nbr);
+        }
+      }
+      groups.push(group);
+    }
+
+    // Assign new cluster IDs (first group keeps origCid to minimise churn)
+    for (let gi = 0; gi < groups.length; gi++) {
+      const globalCid = gi === 0 ? origCid : ++maxClusterId;
+      for (const artNr of groups[gi]) {
+        clusters.set(artNr, globalCid);
+      }
+    }
+  }
+
   // Assign cluster_id back to processed articles
   for (const p of processed) {
     p.cluster_id = clusters.get(String(p.artikelnummer)) ?? 0;

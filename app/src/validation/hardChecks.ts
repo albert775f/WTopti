@@ -4,9 +4,10 @@ export function runHardChecks(
   wts: WT[],
   artikel: ArtikelData[],
   bestand: BestandData[],
+  excludedArticleNumbers?: Set<string>,
 ): HardCheckResult[] {
   return [
-    checkC1_Bestandsvollstaendigkeit(wts, bestand),
+    checkC1_Bestandsvollstaendigkeit(wts, bestand, excludedArticleNumbers),
     checkC2_GewichtHardLimit(wts),
     checkC3_HoehenLimit(wts, artikel),
     checkC4_WTEindeutigkeit(wts),
@@ -17,7 +18,9 @@ export function runHardChecks(
   ];
 }
 
-function checkC1_Bestandsvollstaendigkeit(wts: WT[], bestand: BestandData[]): HardCheckResult {
+function checkC1_Bestandsvollstaendigkeit(
+  wts: WT[], bestand: BestandData[], excludedArticleNumbers?: Set<string>,
+): HardCheckResult {
   const details: HardCheckDetail[] = [];
   const placed = new Map<string, number>();
   for (const wt of wts) {
@@ -27,6 +30,8 @@ function checkC1_Bestandsvollstaendigkeit(wts: WT[], bestand: BestandData[]): Ha
   }
   for (const b of bestand) {
     if (b.bestand <= 0) continue;
+    // Skip intentionally excluded articles (SPERRGUT, HEIGHT_EXCEEDED, etc.) — F9
+    if (excludedArticleNumbers?.has(b.artikelnummer)) continue;
     const p = placed.get(b.artikelnummer) ?? 0;
     if (p !== b.bestand) {
       details.push({
@@ -125,9 +130,9 @@ function checkC7_FlaechenIntegritaet(wts: WT[]): HardCheckResult {
     if (usedArea > wtArea * 1.01) { // 1% tolerance
       details.push({
         key: wt.id,
-        expected: `≤${Math.round(usableArea)} mm²`,
+        expected: `≤${Math.round(wtArea)} mm²`,
         actual: `${Math.round(usedArea)} mm²`,
-        message: `WT ${wt.id} überläuft: ${Math.round(usedArea)} mm² > ${Math.round(usableArea)} mm² nutzbar`,
+        message: `WT ${wt.id} überläuft: ${Math.round(usedArea)} mm² > ${Math.round(wtArea)} mm² nutzbar`,
       });
     }
   }

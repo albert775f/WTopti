@@ -150,7 +150,10 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
 
     // Compute validation dashboard
     const { wts: baselineWTs } = calculateBaseline(phase1Result.processed, config);
-    const hardChecks = runHardChecks(wts, artikel, bestand);
+    const excludedArticleNumbers = new Set<string>(
+      (phase1Result.validation.exclusion_log ?? []).map(e => e.artikelnummer),
+    );
+    const hardChecks = runHardChecks(wts, artikel, bestand, excludedArticleNumbers);
     const orderSimulation = runOrderSimulation(phase1Result.filteredBestellungen, wts, baselineWTs);
     const metricsRaw = calculateMetrics(
       wts, baselineWTs, phase1Result.processed, phase1Result.filteredBestellungen,

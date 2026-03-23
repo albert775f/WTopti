@@ -106,45 +106,68 @@ export default function WTVisualization() {
     const DIVIDER = 5;
     const WT_W = 500;
 
+    // Check whether phase3 stored zone coordinates (F5)
+    const hasCoords = wt.positionen.length > 0 && wt.positionen[0].zone_x !== undefined;
+
     // Pre-compute zone dimensions (using same orientation logic as phase3's zoneLayout).
     const withDims = wt.positionen.map(pos => {
       const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
       const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
       const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
-      const { eL, eB, actualAcross, stackRows, zoneW, zoneH } =
+      const { eL, eB, actualAcross, stackRows, zoneW: pzW, zoneH: pzH } =
         pickZoneLayout(laenge, breite, stacksNeeded, WT_W);
+      // Use stored dims if available (they reflect the actual orientation chosen by phase3)
+      const zoneW = hasCoords ? (pos.zone_w ?? pzW) : pzW;
+      const zoneH = hasCoords ? (pos.zone_h ?? pzH) : pzH;
       return { pos, eL, eB, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH };
     });
 
-    // Sort ascending by zone height (shallowest first).
-    // Placing short zones early leaves maximum depth for tall zones — avoids
-    // the case where a single tall zone (e.g. 780/800mm) pushes all other
-    // positions out of the visible WT area.
-    withDims.sort((a, b) => a.zoneH - b.zoneH);
+    if (hasCoords) {
+      // Sort by stored y then x — preserves phase3 packing order exactly
+      withDims.sort((a, b) => {
+        const ay = a.pos.zone_y ?? 0, by2 = b.pos.zone_y ?? 0;
+        return ay !== by2 ? ay - by2 : (a.pos.zone_x ?? 0) - (b.pos.zone_x ?? 0);
+      });
+    } else {
+      // Fallback: sort ascending by zone height (shallowest first)
+      withDims.sort((a, b) => a.zoneH - b.zoneH);
+    }
 
     const rects: LayoutRect[] = [];
     const zoneList: ZoneInfo[] = [];
     let curX = 0, curY = 0, shelfH = 0;
 
     for (const { pos, eL, eB, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH } of withDims) {
-      // Wrap to new shelf if zone doesn't fit beside current zones
-      if (curX > 0 && curX + DIVIDER + zoneW > WT_W) {
-        curY += shelfH + DIVIDER;
-        curX = 0;
-        shelfH = 0;
+      let renderX: number;
+      let renderY: number;
+
+      if (hasCoords && pos.zone_x !== undefined && pos.zone_y !== undefined) {
+        // Use stored coordinates from phase3 — no re-layout, no overflow skipping
+        renderX = pos.zone_x;
+        renderY = pos.zone_y;
+      } else {
+        // Fallback re-layout
+        if (curX > 0 && curX + DIVIDER + zoneW > WT_W) {
+          curY += shelfH + DIVIDER;
+          curX = 0;
+          shelfH = 0;
+        }
+        // Skip (don't stop) if zone overflows WT depth
+        if (curY + zoneH > realDepth) continue;
+        renderX = curX;
+        renderY = curY;
+        curX += zoneW + DIVIDER;
+        shelfH = Math.max(shelfH, zoneH);
       }
 
-      // Skip (don't stop) if zone overflows WT depth — continue to try remaining zones
-      if (curY + zoneH > realDepth) continue;
-
-      zoneList.push({ x: curX, y: curY, w: zoneW, h: zoneH });
+      zoneList.push({ x: renderX, y: renderY, w: zoneW, h: zoneH });
 
       const compact = stacksNeeded > COMPACT_THRESHOLD;
 
       if (compact) {
         rects.push({
-          x: curX, y: curY, w: zoneW, h: zoneH,
+          x: renderX, y: renderY, w: zoneW, h: zoneH,
           pos, stackIndex: -1, stackItems: pos.stueckzahl, totalStacks: stacksNeeded,
           compact: true, zoneW, zoneH, gridCols: actualAcross, gridRows: stackRows,
         });
@@ -158,8 +181,8 @@ export default function WTVisualization() {
             const stackItems = Math.min(remaining, maxStapel);
             remaining = Math.max(0, remaining - stackItems);
             rects.push({
-              x: curX + col * eL,
-              y: curY + row * eB,
+              x: renderX + col * eL,
+              y: renderY + row * eB,
               w: eL, h: eB,
               pos,
               stackIndex: row * actualAcross + col,
@@ -170,9 +193,6 @@ export default function WTVisualization() {
           }
         }
       }
-
-      curX += zoneW + DIVIDER;
-      shelfH = Math.max(shelfH, zoneH);
     }
 
     return { stackRects: rects, zones: zoneList };

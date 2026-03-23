@@ -259,23 +259,26 @@ function canFitNewZone(state: WTState, zoneW: number, zoneH: number): boolean {
   return newShelfY + zoneH <= state.wtDepth && zoneW <= state.wtWidth;
 }
 
-function placeNewZone(state: WTState, zoneW: number, zoneH: number): void {
+function placeNewZone(state: WTState, zoneW: number, zoneH: number): { x: number; y: number } {
   const xOffset = state.currentShelfUsedWidth > 0
     ? state.currentShelfUsedWidth + DIVIDER_MM
     : 0;
   if (xOffset + zoneW <= state.wtWidth) {
     const newShelfH = Math.max(state.currentShelfHeight, zoneH);
     if (state.completedShelvesDepth + newShelfH <= state.wtDepth) {
+      const coords = { x: xOffset, y: state.completedShelvesDepth };
       state.currentShelfUsedWidth = xOffset + zoneW;
       state.currentShelfHeight = newShelfH;
-      return;
+      return coords;
     }
   }
   // Start new shelf
   const div = state.currentShelfHeight > 0 ? DIVIDER_MM : 0;
-  state.completedShelvesDepth += state.currentShelfHeight + div;
+  const newY = state.completedShelvesDepth + state.currentShelfHeight + div;
+  state.completedShelvesDepth = newY;
   state.currentShelfUsedWidth = zoneW;
   state.currentShelfHeight = zoneH;
+  return { x: 0, y: newY };
 }
 
 // ============================================================
@@ -459,8 +462,8 @@ function consolidateUnderfilled(
           );
           if (!canFitNewZone(tgt, zoneW, zoneH)) continue;
 
-          tgt.wt.positionen.push({ ...pos });
-          placeNewZone(tgt, zoneW, zoneH);
+          const { x: czX, y: czY } = placeNewZone(tgt, zoneW, zoneH);
+          tgt.wt.positionen.push({ ...pos, zone_x: czX, zone_y: czY, zone_w: zoneW, zone_h: zoneH });
         }
 
         updateWTMetrics(tgt, config);
@@ -575,6 +578,7 @@ export function processPhase3(
               );
               if (!canFitNewZone(wtState, zoneW, zoneH)) continue;
 
+              const { x: zoneX1, y: zoneY1 } = placeNewZone(wtState, zoneW, zoneH);
               wtState.wt.positionen.push({
                 artikelnummer: String(artikel.artikelnummer),
                 bezeichnung: artikel.bezeichnung,
@@ -585,8 +589,8 @@ export function processPhase3(
                 breite_mm: orient.h2_mm,
                 laenge_mm: orient.h1_mm,
                 max_stapelhoehe: orient.max_stapelhoehe,
+                zone_x: zoneX1, zone_y: zoneY1, zone_w: zoneW, zone_h: zoneH,
               });
-              placeNewZone(wtState, zoneW, zoneH);
               updateWTMetrics(wtState, config);
               remaining -= toPlace;
               placed = true;
@@ -640,6 +644,7 @@ export function processPhase3(
             wtDepth: newDepth,
           };
 
+          const { x: zoneX2, y: zoneY2 } = placeNewZone(newState, zoneW, zoneH);
           newWT.positionen.push({
             artikelnummer: String(artikel.artikelnummer),
             bezeichnung: artikel.bezeichnung,
@@ -650,9 +655,8 @@ export function processPhase3(
             breite_mm: orient.h2_mm,
             laenge_mm: orient.h1_mm,
             max_stapelhoehe: orient.max_stapelhoehe,
+            zone_x: zoneX2, zone_y: zoneY2, zone_w: zoneW, zone_h: zoneH,
           });
-
-          placeNewZone(newState, zoneW, zoneH);
           updateWTMetrics(newState, config);
           clusterWTStates.push(newState);
           remaining -= actualPlace;
@@ -704,8 +708,12 @@ export function processPhase3(
         if (existingOnTarget) {
           existingOnTarget.stueckzahl += lightest.stueckzahl;
         } else {
+          const { x: wzX, y: wzY } = placeNewZone(tgtState, zoneW, zoneH);
+          lightest.zone_x = wzX;
+          lightest.zone_y = wzY;
+          lightest.zone_w = zoneW;
+          lightest.zone_h = zoneH;
           tgtState.wt.positionen.push(lightest);
-          placeNewZone(tgtState, zoneW, zoneH);
         }
         updateWTMetrics(srcState, config);
         updateWTMetrics(tgtState, config);

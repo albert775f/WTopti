@@ -2,9 +2,8 @@ import { useMemo, useState } from 'react';
 import { useAppState, useAppDispatch } from '../context/AppContext';
 import type { ArticleCost } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { KLEIN_FLOOR_M2, GROSS_FLOOR_M2 } from '../algorithm/phase3';
 
-const KLEIN_FLOOR_M2 = 0.25;
-const GROSS_FLOOR_M2 = 0.40;
 const WAREHOUSE_AREA_DEFAULT = 1480.65;
 
 export default function WTRatioSection() {

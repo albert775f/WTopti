@@ -77,6 +77,11 @@ export interface WTPosition {
   breite_mm?: number;      // strip depth (article breite, for balancing + visualization)
   laenge_mm?: number;      // article length (for strip-aware visualization)
   max_stapelhoehe?: number; // floor(320/hoehe_mm) (for strip capacity in visualization)
+  // Zone layout coords set by phase3 (used by WTVisualization to render 1:1 without re-layout)
+  zone_x?: number;         // x offset on WT (mm from left edge)
+  zone_y?: number;         // y offset on WT (mm from front/top edge)
+  zone_w?: number;         // zone width mm
+  zone_h?: number;         // zone depth mm
 }
 
 export interface WT {

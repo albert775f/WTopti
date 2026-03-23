@@ -63,10 +63,8 @@ export function computeArticleCosts(
 
   for (const art of processed) {
     if (art.bestand <= 0) continue;
-    if (art.hoehe_mm > config.hoehe_limit_mm) continue;
     if (art.grundflaeche_mm2 <= 0) continue;
-    if (art.laenge_mm > 500) continue;
-    if (art.breite_mm > 800) continue;
+    // No dimension pre-filters here — bestArticleOrientation / itemsPerWT2D already checks all 6 orientations
 
     const fitsKlein = art.breite_mm <= 500 && art.laenge_mm <= 500;
     const itemsKlein = fitsKlein ? itemsPerWT2D(art, KLEIN_AREA, config.gewicht_hard_kg) : 0;
@@ -78,7 +76,7 @@ export function computeArticleCosts(
     const areaCostKlein = fitsKlein ? nKlein * KLEIN_FLOOR_M2 : 99999;
     const areaCostGross = nGross * GROSS_FLOOR_M2;
 
-    const isWeightLimited = itemsKlein === itemsGross;
+    const isWeightLimited = fitsKlein && itemsKlein > 0 && itemsGross > 0 && itemsKlein === itemsGross;
     const bestType: 'KLEIN' | 'GROSS' = (!fitsKlein || areaCostGross < areaCostKlein) ? 'GROSS' : 'KLEIN';
     const areaSaving = (fitsKlein ? areaCostKlein : 0) - areaCostGross;
 

@@ -13,7 +13,7 @@ export function calculateBaseline(
 
   for (const art of sorted) {
     if (art.bestand <= 0) continue;
-    if (art.hoehe_mm > config.hoehe_limit_mm) continue;
+    if (Math.min(art.hoehe_mm, art.breite_mm, art.laenge_mm) > config.hoehe_limit_mm) continue;
     if (!art.gewicht_kg || art.grundflaeche_mm2 <= 0) continue;
 
     const KLEIN_AREA = 250000;
