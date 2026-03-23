@@ -126,6 +126,13 @@ function ConfigPanel() {
             className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
           <span className="text-xs text-gray-400">STOROJET Rack-Gesamtfläche</span>
         </label>
+        <label className="block">
+          <span className="text-sm text-gray-600">Min. Fachgröße (mm)</span>
+          <input type="number" min={0} step={10} value={config.min_segment_mm ?? 90}
+            onChange={(e) => update({ min_segment_mm: Math.max(0, +e.target.value) })}
+            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
+          <span className="text-xs text-gray-400">Mindestbreite UND -tiefe jedes Fachs (Greifraumregel)</span>
+        </label>
         <div className="block">
           <span className="text-gray-500 text-xs">Teilerbreite: <strong>5 mm</strong> (fest)</span>
         </div>

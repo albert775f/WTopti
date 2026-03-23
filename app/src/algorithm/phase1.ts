@@ -7,6 +7,7 @@ import type {
   ValidationResult,
   ExclusionLogEntry,
 } from '../types';
+import { bestArticleOrientation } from './phase3';
 
 /**
  * Phase 1: Data preparation + ABC classification.
@@ -176,6 +177,27 @@ export function processPhase1(
         bestand: bestandVal, detail: 'Gewicht_kg fehlt oder ist 0',
       });
       continue;
+    }
+
+    // Priority 5: SEGMENT_TOO_SMALL — no orientation fits hand-reachability minimum (90×90 mm default)
+    if (config.min_segment_mm > 0) {
+      const fitsKlein = bestArticleOrientation(
+        art.hoehe_mm, art.breite_mm, art.laenge_mm,
+        art.gewicht_kg, 500, 500, config.gewicht_hard_kg, config.min_segment_mm,
+      );
+      const fitsGross = bestArticleOrientation(
+        art.hoehe_mm, art.breite_mm, art.laenge_mm,
+        art.gewicht_kg, 500, 800, config.gewicht_hard_kg, config.min_segment_mm,
+      );
+      if (!fitsKlein && !fitsGross) {
+        exclusionLog.push({
+          artikelnummer: artNr, bezeichnung: bez,
+          exclusion_reason: 'SEGMENT_TOO_SMALL', exclusion_phase: 'FILTER',
+          bestand: bestandVal,
+          detail: `Kein Fach ≥ ${config.min_segment_mm}×${config.min_segment_mm}mm möglich (B=${art.breite_mm}mm, L=${art.laenge_mm}mm)`,
+        });
+        continue;
+      }
     }
 
     enriched.push({ art, bestandVal, umsatzGesamt: umsatzMap.get(artNr) ?? 0 });

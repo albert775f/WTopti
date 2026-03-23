@@ -61,6 +61,7 @@ export interface WTConfig {
   co_occurrence_schwellwert: number; // default: 3
   a_artikel_scatter_n: number;    // default: 3 — split A-articles across n WTs
   warehouse_area_m2: number;      // default: 1480.65 — total STOROJET rack floor area
+  min_segment_mm: number;         // default: 90 — minimum zone width AND depth (hand reachability)
 }
 
 // ============ WT + OUTPUT TYPES ============
@@ -177,7 +178,8 @@ export type ExclusionReason =
   | 'DIMENSIONS_MISSING'
   | 'WEIGHT_MISSING'
   | 'NO_MASTER_RECORD'
-  | 'SON_ARTICLE';
+  | 'SON_ARTICLE'
+  | 'SEGMENT_TOO_SMALL';
 
 export interface ExclusionLogEntry {
   artikelnummer: string;

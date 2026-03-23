@@ -56,17 +56,19 @@ export function calculateMetrics(
   const m6BaseVal = baselineWTs.length > 0 ? lowAreaBaseline / baselineWTs.length : 0;
   const m6 = makeMetric('M6', 'WTs Fläche < 30%', m6Val, m6BaseVal, '%', thresholds);
 
-  // M7: Co-occurrence score (fraction of top-100 pairs on same WT)
-  const artToWT = new Map<string, string>();
+  // M7: Co-occurrence score (fraction of top-100 pairs sharing at least one WT)
+  const artToWTs = new Map<string, Set<string>>();
   for (const wt of wts) {
     for (const pos of wt.positionen) {
-      if (!artToWT.has(pos.artikelnummer)) artToWT.set(pos.artikelnummer, wt.id);
+      if (!artToWTs.has(pos.artikelnummer)) artToWTs.set(pos.artikelnummer, new Set());
+      artToWTs.get(pos.artikelnummer)!.add(wt.id);
     }
   }
-  const artToBaseWT = new Map<string, string>();
+  const artToBaseWTs = new Map<string, Set<string>>();
   for (const wt of baselineWTs) {
     for (const pos of wt.positionen) {
-      if (!artToBaseWT.has(pos.artikelnummer)) artToBaseWT.set(pos.artikelnummer, wt.id);
+      if (!artToBaseWTs.has(pos.artikelnummer)) artToBaseWTs.set(pos.artikelnummer, new Set());
+      artToBaseWTs.get(pos.artikelnummer)!.add(wt.id);
     }
   }
 
@@ -79,9 +81,16 @@ export function calculateMetrics(
   pairs.sort((x, y) => y.score - x.score);
   const top100 = pairs.slice(0, 100);
 
-  const sameWT = top100.filter(p => artToWT.get(p.a) && artToWT.get(p.a) === artToWT.get(p.b)).length;
+  const sharesWT = (map: Map<string, Set<string>>, a: string, b: string): boolean => {
+    const wa = map.get(a);
+    const wb = map.get(b);
+    if (!wa || !wb) return false;
+    for (const id of wa) if (wb.has(id)) return true;
+    return false;
+  };
+  const sameWT = top100.filter(p => sharesWT(artToWTs, p.a, p.b)).length;
   const m7Val = top100.length > 0 ? sameWT / top100.length : 0;
-  const sameBaseWT = top100.filter(p => artToBaseWT.get(p.a) && artToBaseWT.get(p.a) === artToBaseWT.get(p.b)).length;
+  const sameBaseWT = top100.filter(p => sharesWT(artToBaseWTs, p.a, p.b)).length;
   const m7BaseVal = top100.length > 0 ? sameBaseWT / top100.length : 0;
   const m7 = makeMetric('M7', 'Co-Occ Top-100 auf gleichem WT', m7Val, m7BaseVal, '%', thresholds);
 

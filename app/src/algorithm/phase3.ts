@@ -52,6 +52,7 @@ export function bestArticleOrientation(
   wtWidth: number,
   wtDepth: number,
   maxWeightKg: number,
+  minSegMm = 0,
 ): ArticleOrientation | null {
   const dims: [number, number, number] = [h_mm, b_mm, l_mm];
   let best: ArticleOrientation | null = null;
@@ -67,6 +68,8 @@ export function bestArticleOrientation(
     for (const [fp1, fp2] of [[fp[0], fp[1]], [fp[1], fp[0]]] as [number, number][]) {
       if (fp1 <= 0 || fp2 <= 0) continue;
       if (fp1 > wtWidth || fp2 > wtDepth) continue;
+      // Minimum segment size: each footprint dimension must be reachable by hand
+      if (fp1 < minSegMm || fp2 < minSegMm) continue;
 
       const cols = Math.floor(wtWidth / fp1);
       const rows = Math.floor(wtDepth / fp2);
@@ -140,18 +143,19 @@ export function itemsPerWT(
   wtWidth: number,
   wtDepth: number,
   maxWeightKg: number,
+  minSegMm = 0,
 ): number {
   const orient = bestArticleOrientation(
     artikel.hoehe_mm, artikel.breite_mm, artikel.laenge_mm,
-    artikel.gewicht_kg, wtWidth, wtDepth, maxWeightKg,
+    artikel.gewicht_kg, wtWidth, wtDepth, maxWeightKg, minSegMm,
   );
   return orient?.items ?? 0;
 }
 
 /** Backward-compatible alias used by phase5.ts */
-export function itemsPerWT2D(artikel: ArtikelProcessed, wtArea: number, maxWeightKg: number): number {
+export function itemsPerWT2D(artikel: ArtikelProcessed, wtArea: number, maxWeightKg: number, minSegMm = 0): number {
   const depth = wtArea === KLEIN_AREA ? WT_DEPTH_KLEIN : WT_DEPTH_GROSS;
-  return itemsPerWT(artikel, WT_WIDTH, depth, maxWeightKg);
+  return itemsPerWT(artikel, WT_WIDTH, depth, maxWeightKg, minSegMm);
 }
 
 /**
@@ -312,11 +316,11 @@ export function planWTTypes(
 
     const orientKlein = bestArticleOrientation(
       art.hoehe_mm, art.breite_mm, art.laenge_mm,
-      art.gewicht_kg, WT_WIDTH, WT_DEPTH_KLEIN, config.gewicht_hard_kg,
+      art.gewicht_kg, WT_WIDTH, WT_DEPTH_KLEIN, config.gewicht_hard_kg, config.min_segment_mm,
     );
     const orientGross = bestArticleOrientation(
       art.hoehe_mm, art.breite_mm, art.laenge_mm,
-      art.gewicht_kg, WT_WIDTH, WT_DEPTH_GROSS, config.gewicht_hard_kg,
+      art.gewicht_kg, WT_WIDTH, WT_DEPTH_GROSS, config.gewicht_hard_kg, config.min_segment_mm,
     );
 
     // Skip if article cannot fit on any WT type
@@ -517,11 +521,11 @@ export function processPhase3(
       // Compute best orientation for each WT type up front
       const orientKlein = bestArticleOrientation(
         artikel.hoehe_mm, artikel.breite_mm, artikel.laenge_mm,
-        artikel.gewicht_kg, WT_WIDTH, WT_DEPTH_KLEIN, config.gewicht_hard_kg,
+        artikel.gewicht_kg, WT_WIDTH, WT_DEPTH_KLEIN, config.gewicht_hard_kg, config.min_segment_mm,
       );
       const orientGross = bestArticleOrientation(
         artikel.hoehe_mm, artikel.breite_mm, artikel.laenge_mm,
-        artikel.gewicht_kg, WT_WIDTH, WT_DEPTH_GROSS, config.gewicht_hard_kg,
+        artikel.gewicht_kg, WT_WIDTH, WT_DEPTH_GROSS, config.gewicht_hard_kg, config.min_segment_mm,
       );
 
       // Skip article entirely if it can't fit on either WT type

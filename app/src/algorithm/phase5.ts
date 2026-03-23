@@ -67,8 +67,8 @@ export function computeArticleCosts(
     // No dimension pre-filters here — bestArticleOrientation / itemsPerWT2D already checks all 6 orientations
 
     const fitsKlein = art.breite_mm <= 500 && art.laenge_mm <= 500;
-    const itemsKlein = fitsKlein ? itemsPerWT2D(art, KLEIN_AREA, config.gewicht_hard_kg) : 0;
-    const itemsGross = itemsPerWT2D(art, GROSS_AREA, config.gewicht_hard_kg);
+    const itemsKlein = fitsKlein ? itemsPerWT2D(art, KLEIN_AREA, config.gewicht_hard_kg, config.min_segment_mm) : 0;
+    const itemsGross = itemsPerWT2D(art, GROSS_AREA, config.gewicht_hard_kg, config.min_segment_mm);
 
     const nKlein = fitsKlein ? Math.ceil(art.bestand / Math.max(1, itemsKlein)) : 0;
     const nGross = Math.ceil(art.bestand / Math.max(1, itemsGross));

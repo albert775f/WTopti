@@ -60,6 +60,7 @@ const DEFAULT_CONFIG: WTConfig = {
   co_occurrence_schwellwert: 3,
   a_artikel_scatter_n: 3,
   warehouse_area_m2: 1480.65,
+  min_segment_mm: 90,
 };
 
 const initialState: AppState = {
