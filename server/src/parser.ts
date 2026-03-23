@@ -59,10 +59,16 @@ export function parseArtikel(buffer: Buffer): ArtikelRow[] {
     // Weight: null → 0 (frontend detects WEIGHT_MISSING / WEIGHT_EXCEEDED)
     const gewicht_kg = safeParseFloat(row['Gewicht in kg']) ?? 0;
 
-    // Dimensions in cm → mm (×10); null/missing → 0 (frontend detects DIMENSIONS_MISSING)
-    const hoehe_mm = (safeParseFloat(row['Höhe_cm']) ?? 0) * 10;
-    const breite_mm = (safeParseFloat(row['Breite_cm']) ?? 0) * 10;
-    const laenge_mm = (safeParseFloat(row['Länge_cm']) ?? 0) * 10;
+    // Dimensions: prefer *_cm columns (×10 → mm), fall back to bare names (already mm)
+    const hoehe_mm = row['Höhe_cm'] != null
+      ? (safeParseFloat(row['Höhe_cm']) ?? 0) * 10
+      : (safeParseFloat(row['Höhe']) ?? 0);
+    const breite_mm = row['Breite_cm'] != null
+      ? (safeParseFloat(row['Breite_cm']) ?? 0) * 10
+      : (safeParseFloat(row['Breite']) ?? 0);
+    const laenge_mm = row['Länge_cm'] != null
+      ? (safeParseFloat(row['Länge_cm']) ?? 0) * 10
+      : (safeParseFloat(row['Länge']) ?? 0);
 
     const grundflaeche_mm2 = breite_mm * laenge_mm;
     const max_stapelhoehe = hoehe_mm > 0 ? Math.floor(320 / hoehe_mm) : 0;
@@ -88,9 +94,8 @@ export function parseArtikel(buffer: Buffer): ArtikelRow[] {
 
 export function parseBestellungen(buffer: Buffer): BestellungRow[] {
   const wb = XLSX.read(buffer, { type: 'buffer' });
-  const sheetName = 'Bestellungen';
-  const ws = wb.Sheets[sheetName];
-  if (!ws) throw new Error(`Sheet "${sheetName}" not found`);
+  const ws = wb.Sheets['Bestellungen'] ?? wb.Sheets[wb.SheetNames[0]];
+  if (!ws) throw new Error('No sheet found in Bestellungen file');
 
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
   const result: BestellungRow[] = [];
