@@ -68,8 +68,6 @@ export function bestArticleOrientation(
     for (const [fp1, fp2] of [[fp[0], fp[1]], [fp[1], fp[0]]] as [number, number][]) {
       if (fp1 <= 0 || fp2 <= 0) continue;
       if (fp1 > wtWidth || fp2 > wtDepth) continue;
-      // Minimum segment size: each footprint dimension must be reachable by hand
-      if (fp1 < minSegMm || fp2 < minSegMm) continue;
 
       const cols = Math.floor(wtWidth / fp1);
       const rows = Math.floor(wtDepth / fp2);
@@ -183,6 +181,7 @@ function zoneLayout(
   artikel: Pick<ArtikelProcessed, 'laenge_mm' | 'breite_mm'>,
   stacksNeeded: number,
   wtWidth: number,
+  minSegMm = 0,
 ): { zoneW: number; zoneH: number } {
   const l = artikel.laenge_mm;
   const b = artikel.breite_mm;
@@ -196,14 +195,22 @@ function zoneLayout(
   const across2 = b <= wtWidth ? Math.max(1, Math.min(n, Math.floor(wtWidth / b))) : 0;
   const h2 = across2 > 0 ? Math.ceil(n / across2) * l : Infinity;
 
+  let zoneW: number, zoneH: number;
   if (across2 > 0 && h2 <= h1) {
-    return { zoneW: across2 * b, zoneH: h2 };
+    zoneW = across2 * b; zoneH = h2;
+  } else if (across1 > 0) {
+    zoneW = across1 * l; zoneH = h1;
+  } else {
+    zoneW = l; zoneH = b; // fallback
   }
-  if (across1 > 0) {
-    return { zoneW: across1 * l, zoneH: h1 };
+
+  // Enforce minimum segment size (hand-reachability): pad zone if smaller than minimum.
+  // The dividers will be set at least minSegMm apart — extra space is clearance.
+  if (minSegMm > 0) {
+    zoneW = Math.max(zoneW, Math.min(minSegMm, wtWidth));
+    zoneH = Math.max(zoneH, minSegMm);
   }
-  // Fallback (shouldn't happen if caller pre-checks capacity)
-  return { zoneW: l, zoneH: b };
+  return { zoneW, zoneH };
 }
 
 function createWT(id: string, typ: WTTyp, clusterId: number): WT {
@@ -463,6 +470,7 @@ function consolidateUnderfilled(
             { laenge_mm: pos.laenge_mm ?? 10, breite_mm: pos.breite_mm ?? 10 },
             stacks,
             tgt.wtWidth,
+            config.min_segment_mm,
           );
           if (!canFitNewZone(tgt, zoneW, zoneH)) continue;
 
@@ -579,6 +587,7 @@ export function processPhase3(
                 { laenge_mm: orient.h1_mm, breite_mm: orient.h2_mm },
                 stacks,
                 WT_WIDTH,
+                config.min_segment_mm,
               );
               if (!canFitNewZone(wtState, zoneW, zoneH)) continue;
 
@@ -625,6 +634,7 @@ export function processPhase3(
             { laenge_mm: orient.h1_mm, breite_mm: orient.h2_mm },
             stacks,
             WT_WIDTH,
+            config.min_segment_mm,
           );
 
           let id: string;
@@ -687,6 +697,7 @@ export function processPhase3(
       { laenge_mm: lightest.laenge_mm ?? 10, breite_mm: lightest.breite_mm ?? 10 },
       stacks,
       WT_WIDTH,
+      config.min_segment_mm,
     );
 
     const sameCluster = allWTStates.filter(
