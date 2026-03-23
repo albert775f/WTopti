@@ -132,25 +132,28 @@ export interface ArticleCost {
 }
 
 export interface WTRatioRecommendation {
-  warehouse_area_m2: number;
-  area_used_m2: number;
-  area_free_m2: number;
-  area_free_pct: number;
-  available_klein: number;
-  available_gross: number;
-  optimal_klein_used: number;
-  optimal_gross_used: number;
-  klein_free: number;
-  gross_free: number;
+  warehouse_area_m2: number;        // hardcoded STOROJET total floor area (1480.65 m²)
+  // Current run (actual packed WTs)
+  current_klein: number;
+  current_gross: number;
+  current_area_m2: number;
+  current_area_free_m2: number;
+  current_area_free_pct: number;
+  // Optimal (analytical floor-cost minimisation, no budget constraint)
+  optimal_klein: number;
+  optimal_gross: number;
+  optimal_area_m2: number;
+  optimal_area_free_m2: number;
+  optimal_area_free_pct: number;
+  optimal_fits: boolean;            // true if optimal fits within warehouse_area_m2
+  // Breakdown
+  articles_must_gross: number;      // articles that only fit on GROSS
+  articles_prefer_gross: number;    // articles that fit both but GROSS saves floor space
   articles_on_klein: number;
-  articles_on_gross: number;
-  articles_must_gross: number;
-  articles_weight_limited: number;
-  articles_geometry_limited: number;
-  wts_if_all_klein: number;
-  wts_optimal: number;
-  klein_saved: number;
-  top_gross_examples: ArticleCost[];  // top 3 examples where GROSS saves most floor space
+  klein_saved: number;              // current_klein − optimal_klein (positive = potential reduction)
+  gross_delta: number;              // optimal_gross − current_gross
+  area_saved_m2: number;            // current_area − optimal_area
+  top_gross_examples: ArticleCost[];
   empfehlung: string;
 }
 

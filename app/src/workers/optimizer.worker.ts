@@ -134,17 +134,9 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       },
     };
 
-    const runPipeline = (cfg: WTConfig): OptimizationResult => {
-      const r1 = processPhase1(artikel, bestellungen, bestand, cfg);
-      const r2 = processPhase2(r1.processed, r1.filteredBestellungen, cfg);
-      const w = processPhase3(r1.processed, r2, cfg);
-      return { ...baseResult, wts: w };
-    };
-
-    const { szenarien, recommendation, articleCosts } = processPhase5(
-      baseResult, config, phase1Result.processed, runPipeline, phase2Result.coMatrix,
+    const { recommendation, articleCosts } = processPhase5(
+      baseResult, config, phase1Result.processed,
     );
-    baseResult.szenarien = szenarien;
     baseResult.wt_recommendation = recommendation;
     baseResult.article_costs = articleCosts;
 
