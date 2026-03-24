@@ -26,6 +26,7 @@ const REASON_LABELS: Record<ExclusionReason, string> = {
   WEIGHT_MISSING: 'Gewicht unbekannt',
   NO_MASTER_RECORD: 'Kein Stammdatensatz',
   SON_ARTICLE: 'Rabatt-/Sonderartikel (SON)',
+  SEGMENT_TOO_SMALL: 'Segment zu klein (min. Breite)',
 };
 
 const REASON_ORDER: ExclusionReason[] = [

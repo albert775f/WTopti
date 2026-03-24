@@ -62,6 +62,7 @@ export interface WTConfig {
   a_artikel_scatter_n: number;    // default: 3 — split A-articles across n WTs
   warehouse_area_m2: number;      // default: 1480.65 — total STOROJET rack floor area
   min_segment_mm: number;         // default: 90 — minimum zone width AND depth (hand reachability)
+  griff_puffer_mm: number;        // default: 0 — required free space on at least one zone side for gripping
 }
 
 // ============ WT + OUTPUT TYPES ============

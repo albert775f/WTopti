@@ -124,8 +124,8 @@ function checkC7_FlaechenIntegritaet(wts: WT[]): HardCheckResult {
       });
     }
 
-    // Area integrity: all occupied zones must fit on WT (1% tolerance)
-    const usedArea = wt.positionen.length * wt.zone_w_mm * wt.zone_d_mm;
+    // Area integrity: full grid (all zone slots, not just occupied) must fit on WT (1% tolerance)
+    const usedArea = wt.zone_count * wt.zone_w_mm * wt.zone_d_mm;
     const wtArea = wt.flaeche_brutto_mm2;
     if (usedArea > wtArea * 1.01) {
       details.push({

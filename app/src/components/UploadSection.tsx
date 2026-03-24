@@ -133,6 +133,13 @@ function ConfigPanel() {
             className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
           <span className="text-xs text-gray-400">Mindestbreite UND -tiefe jedes Fachs (Greifraumregel)</span>
         </label>
+        <label className="block">
+          <span className="text-sm text-gray-600">Griffpuffer (mm)</span>
+          <input type="number" min={0} step={5} value={config.griff_puffer_mm ?? 0}
+            onChange={(e) => update({ griff_puffer_mm: Math.max(0, +e.target.value) })}
+            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
+          <span className="text-xs text-gray-400">Freiraum mind. auf einer Seite jedes Fachs zum Greifen</span>
+        </label>
         <div className="block">
           <span className="text-gray-500 text-xs">Teilerbreite: <strong>5 mm</strong> (fest)</span>
         </div>

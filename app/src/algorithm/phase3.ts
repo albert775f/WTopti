@@ -282,6 +282,7 @@ function itemsPerZone(
   laenge_mm: number,
   zoneW: number,
   zoneD: number,
+  griffPufferMm = 0,
 ): number {
   let best = 0;
   const dims: [number, number, number] = [hoehe_mm, breite_mm, laenge_mm];
@@ -292,6 +293,8 @@ function itemsPerZone(
     const fp = dims.filter((_, j) => j !== i) as [number, number];
     for (const [fp1, fp2] of [[fp[0], fp[1]], [fp[1], fp[0]]] as [number, number][]) {
       if (fp1 <= 0 || fp2 <= 0 || fp1 > zoneW || fp2 > zoneD) continue;
+      // At least one side must have >= griffPufferMm free space for gripping
+      if (griffPufferMm > 0 && fp1 > zoneW - griffPufferMm && fp2 > zoneD - griffPufferMm) continue;
       best = Math.max(best, Math.floor(zoneW / fp1) * Math.floor(zoneD / fp2) * stack);
     }
   }
@@ -368,10 +371,10 @@ function tryAddArticleToWT(
 
   // Check all existing positions still fit in the smaller zones
   for (const pos of wt.positionen) {
-    if (itemsPerZone(pos.hoehe_mm, pos.breite_mm, pos.laenge_mm, grid.zoneW, grid.zoneD) < pos.stueckzahl) return 0;
+    if (itemsPerZone(pos.hoehe_mm, pos.breite_mm, pos.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm) < pos.stueckzahl) return 0;
   }
 
-  const cap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD);
+  const cap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm);
   if (cap <= 0) return 0;
 
   let toPlace = Math.min(remaining, cap);
@@ -414,9 +417,9 @@ function tryMovePositionToWT(srcWT: WT, pos: WTPosition, tgtWT: WT, config: WTCo
   if (!grid) return false;
 
   for (const tgtPos of tgtWT.positionen) {
-    if (itemsPerZone(tgtPos.hoehe_mm, tgtPos.breite_mm, tgtPos.laenge_mm, grid.zoneW, grid.zoneD) < tgtPos.stueckzahl) return false;
+    if (itemsPerZone(tgtPos.hoehe_mm, tgtPos.breite_mm, tgtPos.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm) < tgtPos.stueckzahl) return false;
   }
-  if (itemsPerZone(pos.hoehe_mm, pos.breite_mm, pos.laenge_mm, grid.zoneW, grid.zoneD) < pos.stueckzahl) return false;
+  if (itemsPerZone(pos.hoehe_mm, pos.breite_mm, pos.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm) < pos.stueckzahl) return false;
   if (tgtWT.gesamtgewicht_kg + pos.gewicht_kg * pos.stueckzahl > config.gewicht_hard_kg) return false;
 
   // Commit: add to target
@@ -516,7 +519,7 @@ export function processPhase3(
           const tryWtD = getWTDepth(tryTyp);
           const grid = bestGrid(1, WT_WIDTH, tryWtD, config.teiler_breite_mm, config.min_segment_mm);
           if (!grid) continue;
-          const cap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD);
+          const cap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm);
           if (cap <= 0) continue;
           let toPlace = Math.min(remaining, cap);
           while (toPlace > 0 && toPlace * art.gewicht_kg > config.gewicht_hard_kg) toPlace--;
@@ -589,7 +592,7 @@ export function processPhase3(
         if (tgtWT.cluster_id !== srcWT.cluster_id) continue;
         if (tryMovePositionToWT(srcWT, pos, tgtWT, config)) { moved = true; break; }
       }
-      if (!moved) { allMoved = false; break; }
+      if (!moved) allMoved = false;
     }
     if (!allMoved) {
       // Revert: srcWT was partially emptied, put it back on the candidates list by not clearing
