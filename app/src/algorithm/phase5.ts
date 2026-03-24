@@ -23,9 +23,9 @@ export function computeArticleCosts(
     if (art.bestand <= 0) continue;
     if (art.grundflaeche_mm2 <= 0) continue;
 
-    const fitsKlein = art.breite_mm <= 500 && art.laenge_mm <= 500;
-    const itemsKlein = fitsKlein ? itemsPerWT2D(art, KLEIN_AREA, config.gewicht_hard_kg, config.min_segment_mm) : 0;
+    const itemsKlein = itemsPerWT2D(art, KLEIN_AREA, config.gewicht_hard_kg, config.min_segment_mm);
     const itemsGross = itemsPerWT2D(art, GROSS_AREA, config.gewicht_hard_kg, config.min_segment_mm);
+    const fitsKlein = itemsKlein > 0;
 
     const nKlein = fitsKlein && itemsKlein > 0 ? Math.ceil(art.bestand / itemsKlein) : 0;
     const nGross = itemsGross > 0 ? Math.ceil(art.bestand / itemsGross) : 0;

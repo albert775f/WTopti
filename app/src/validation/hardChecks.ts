@@ -120,11 +120,15 @@ function checkC7_FlaechenIntegritaet(wts: WT[]): HardCheckResult {
 
     let usedArea = 0;
     for (const pos of wt.positionen) {
-      const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
-      const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
-      const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-      const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-      usedArea += stacksNeeded * laenge * breite;
+      if (pos.zone_w != null && pos.zone_h != null) {
+        usedArea += pos.zone_w * pos.zone_h;
+      } else {
+        const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
+        const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
+        const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
+        const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
+        usedArea += stacksNeeded * laenge * breite;
+      }
     }
 
     if (usedArea > wtArea * 1.01) { // 1% tolerance

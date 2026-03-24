@@ -166,6 +166,9 @@ export function zoneFootprint(artikel: ArtikelProcessed, stueckzahl: number): nu
 }
 
 function zoneFootprintPos(pos: WTPosition): number {
+  // Use stored zone dimensions (actual shelf space consumed) when available
+  if (pos.zone_w != null && pos.zone_h != null) return pos.zone_w * pos.zone_h;
+  // Fallback for positions without stored zone dims
   const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
   const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
   const l = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
@@ -323,11 +326,11 @@ export function planWTTypes(
 
     const orientKlein = bestArticleOrientation(
       art.hoehe_mm, art.breite_mm, art.laenge_mm,
-      art.gewicht_kg, WT_WIDTH, WT_DEPTH_KLEIN, config.gewicht_hard_kg, config.min_segment_mm,
+      art.gewicht_kg, WT_WIDTH, WT_DEPTH_KLEIN, config.gewicht_soft_kg, config.min_segment_mm,
     );
     const orientGross = bestArticleOrientation(
       art.hoehe_mm, art.breite_mm, art.laenge_mm,
-      art.gewicht_kg, WT_WIDTH, WT_DEPTH_GROSS, config.gewicht_hard_kg, config.min_segment_mm,
+      art.gewicht_kg, WT_WIDTH, WT_DEPTH_GROSS, config.gewicht_soft_kg, config.min_segment_mm,
     );
 
     // Skip if article cannot fit on any WT type
@@ -432,7 +435,8 @@ function consolidateUnderfilled(
   const candidateIds = new Set(
     allWTStates
       .filter(s => (s.usedArea / rawArea(s)) * 100 < thresholdPct
-        && s.wt.gesamtgewicht_kg < config.gewicht_soft_kg)
+        && s.wt.gesamtgewicht_kg < config.gewicht_soft_kg
+        && !s.wt.positionen.some(p => p.abc_klasse === 'A')) // protect scattered A-articles
       .map(s => s.wt.id),
   );
 
@@ -451,6 +455,7 @@ function consolidateUnderfilled(
       for (const tgt of allWTStates) {
         if (tgt === src || tgt.wt.positionen.length === 0) continue;
         if (candidateIds.has(tgt.wt.id)) continue;
+        if (tgt.wt.cluster_id !== src.wt.cluster_id) continue;
 
         // Weight check
         if (tgt.wt.gesamtgewicht_kg + pos.gewicht_kg * pos.stueckzahl > config.gewicht_hard_kg) continue;
