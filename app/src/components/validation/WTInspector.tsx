@@ -52,29 +52,22 @@ export default function WTInspector({ wts, initialWTId }: Props) {
   const svgW = 250;
   const svgH = isKlein ? 250 : 400;
   const scale = svgW / 500;
-  const realDepth = isKlein ? 500 : 800;
 
   const layoutRects = useMemo(() => {
     if (!wt) return [];
-    const rects: { x: number; y: number; w: number; h: number; pos: WTPosition }[] = [];
-    let curY = 0;
-    for (let i = 0; i < wt.positionen.length; i++) {
-      const pos = wt.positionen[i];
-      const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-      const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-      const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
-      const slotsAcross = Math.max(1, Math.floor(500 / laenge));
-      const capPerStrip = slotsAcross * maxStapel;
-      const stripsNeeded = Math.max(1, Math.ceil(pos.stueckzahl / capPerStrip));
-      if (i > 0) curY += 5;
-      const rectW = Math.min(slotsAcross * laenge, 500);
-      const rectH = stripsNeeded * breite;
-      rects.push({ x: 0, y: curY, w: rectW, h: rectH, pos });
-      curY += rectH;
-      if (curY >= realDepth) break;
-    }
-    return rects;
-  }, [wt, realDepth]);
+    const { grid_cols, zone_w_mm, zone_d_mm } = wt;
+    return wt.positionen.map(pos => {
+      const col = pos.zone_index % grid_cols;
+      const row = Math.floor(pos.zone_index / grid_cols);
+      return {
+        x: col * (zone_w_mm + 5),
+        y: row * (zone_d_mm + 5),
+        w: zone_w_mm,
+        h: zone_d_mm,
+        pos,
+      };
+    });
+  }, [wt]);
 
   const gewichtPct = wt ? (wt.gesamtgewicht_kg / 24) * 100 : 0;
   const gewichtColor = wt

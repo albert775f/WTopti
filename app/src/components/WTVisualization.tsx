@@ -9,54 +9,14 @@ const CLUSTER_COLORS = [
 const ABC_COLORS: Record<string, string> = { A: '#22c55e', B: '#eab308', C: '#9ca3af' };
 
 type ColorMode = 'cluster' | 'abc';
+const DIVIDER_MM = 5;
 
-// Stacks above this threshold are rendered as a single rect with grid overlay
-const COMPACT_THRESHOLD = 30;
-
-/**
- * Mirrors phase3's zoneLayout: tries both footprint orientations, picks min depth.
- * Returns effective dims (eL = along WT width, eB = along WT depth) and zone bounds.
- */
-function pickZoneLayout(
-  laenge: number, breite: number, stacksNeeded: number, wtW: number,
-): { eL: number; eB: number; actualAcross: number; stackRows: number; zoneW: number; zoneH: number } {
-  const n = Math.max(1, stacksNeeded);
-  // Orientation 1: laenge along width
-  const a1 = laenge <= wtW ? Math.max(1, Math.min(n, Math.floor(wtW / laenge))) : 0;
-  const h1 = a1 > 0 ? Math.ceil(n / a1) * breite : Infinity;
-  // Orientation 2: breite along width (rotated)
-  const a2 = breite <= wtW ? Math.max(1, Math.min(n, Math.floor(wtW / breite))) : 0;
-  const h2 = a2 > 0 ? Math.ceil(n / a2) * laenge : Infinity;
-  if (a2 > 0 && h2 <= h1) {
-    return { eL: breite, eB: laenge, actualAcross: a2, stackRows: Math.ceil(n / a2), zoneW: a2 * breite, zoneH: h2 };
-  }
-  if (a1 > 0) {
-    return { eL: laenge, eB: breite, actualAcross: a1, stackRows: Math.ceil(n / a1), zoneW: a1 * laenge, zoneH: h1 };
-  }
-  return { eL: laenge, eB: breite, actualAcross: 1, stackRows: n, zoneW: laenge, zoneH: n * breite };
-}
-
-interface LayoutRect {
-  x: number;
-  y: number;
-  w: number;           // effective footprint width (laenge_mm)
-  h: number;           // effective footprint depth (breite_mm)
-  pos: WTPosition;
-  stackIndex: number;  // 0-based; -1 = compact zone summary
-  stackItems: number;  // items in this specific stack (last stack may be partial)
-  totalStacks: number;
-  compact: boolean;
-  zoneW: number;       // full zone width mm
-  zoneH: number;       // full zone depth mm
-  gridCols: number;    // stacks per row
-  gridRows: number;    // rows of stacks
-}
-
-interface ZoneInfo {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+interface ZoneRect {
+  x: number;     // mm
+  y: number;     // mm
+  w: number;     // zone_w_mm
+  h: number;     // zone_d_mm
+  pos: WTPosition | null;  // null = empty zone
 }
 
 export default function WTVisualization() {
@@ -65,11 +25,7 @@ export default function WTVisualization() {
   const [colorMode, setColorMode] = useState<ColorMode>('abc');
   const [search, setSearch] = useState('');
   const [tooltip, setTooltip] = useState<{
-    x: number;
-    y: number;
-    pos: WTPosition;
-    stackInfo: string;
-    wtGewicht: number;
+    x: number; y: number; pos: WTPosition; wtGewicht: number;
   } | null>(null);
 
   const wts = result?.wts ?? [];
@@ -95,119 +51,31 @@ export default function WTVisualization() {
   }
 
   const isKlein = wt!.typ === 'KLEIN';
-  const realDepth = isKlein ? 500 : 800;
+  const wtD_mm = isKlein ? 500 : 800;
   const svgW = 250;
   const svgH = isKlein ? 250 : 400;
   const scale = svgW / 500;
 
-  // Compute per-stack rects and zone bounds for dividers
-  const { stackRects, zones } = useMemo(() => {
-    if (!wt) return { stackRects: [] as LayoutRect[], zones: [] as ZoneInfo[] };
-    const DIVIDER = 5;
-    const WT_W = 500;
-
-    // Check whether phase3 stored zone coordinates (F5)
-    const hasCoords = wt.positionen.length > 0 && wt.positionen[0].zone_x !== undefined;
-
-    // Pre-compute zone dimensions (using same orientation logic as phase3's zoneLayout).
-    const withDims = wt.positionen.map(pos => {
-      const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-      const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-      const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
-      const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
-      const { eL, eB, actualAcross, stackRows, zoneW: pzW, zoneH: pzH } =
-        pickZoneLayout(laenge, breite, stacksNeeded, WT_W);
-      // Use stored dims if available (they reflect the actual orientation chosen by phase3)
-      const zoneW = hasCoords ? (pos.zone_w ?? pzW) : pzW;
-      const zoneH = hasCoords ? (pos.zone_h ?? pzH) : pzH;
-      return { pos, eL, eB, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH };
-    });
-
-    if (hasCoords) {
-      // Sort by stored y then x — preserves phase3 packing order exactly
-      withDims.sort((a, b) => {
-        const ay = a.pos.zone_y ?? 0, by2 = b.pos.zone_y ?? 0;
-        return ay !== by2 ? ay - by2 : (a.pos.zone_x ?? 0) - (b.pos.zone_x ?? 0);
-      });
-    } else {
-      // Fallback: sort ascending by zone height (shallowest first)
-      withDims.sort((a, b) => a.zoneH - b.zoneH);
-    }
-
-    const rects: LayoutRect[] = [];
-    const zoneList: ZoneInfo[] = [];
-    let curX = 0, curY = 0, shelfH = 0;
-
-    for (const { pos, eL, eB, maxStapel, stacksNeeded, actualAcross, stackRows, zoneW, zoneH } of withDims) {
-      let renderX: number;
-      let renderY: number;
-
-      if (hasCoords && pos.zone_x !== undefined && pos.zone_y !== undefined) {
-        // Use stored coordinates from phase3 — no re-layout, no overflow skipping
-        renderX = pos.zone_x;
-        renderY = pos.zone_y;
-      } else {
-        // Fallback re-layout
-        if (curX > 0 && curX + DIVIDER + zoneW > WT_W) {
-          curY += shelfH + DIVIDER;
-          curX = 0;
-          shelfH = 0;
-        }
-        // Skip (don't stop) if zone overflows WT depth
-        if (curY + zoneH > realDepth) continue;
-        renderX = curX;
-        renderY = curY;
-        curX += zoneW + DIVIDER;
-        shelfH = Math.max(shelfH, zoneH);
-      }
-
-      zoneList.push({ x: renderX, y: renderY, w: zoneW, h: zoneH });
-
-      const compact = stacksNeeded > COMPACT_THRESHOLD;
-
-      if (compact) {
-        rects.push({
-          x: renderX, y: renderY, w: zoneW, h: zoneH,
-          pos, stackIndex: -1, stackItems: pos.stueckzahl, totalStacks: stacksNeeded,
-          compact: true, zoneW, zoneH, gridCols: actualAcross, gridRows: stackRows,
-        });
-      } else {
-        let remaining = pos.stueckzahl;
-        for (let row = 0; row < stackRows; row++) {
-          const stacksThisRow = row < stackRows - 1
-            ? actualAcross
-            : stacksNeeded - row * actualAcross;
-          for (let col = 0; col < stacksThisRow; col++) {
-            const stackItems = Math.min(remaining, maxStapel);
-            remaining = Math.max(0, remaining - stackItems);
-            rects.push({
-              x: renderX + col * eL,
-              y: renderY + row * eB,
-              w: eL, h: eB,
-              pos,
-              stackIndex: row * actualAcross + col,
-              stackItems,
-              totalStacks: stacksNeeded,
-              compact: false, zoneW, zoneH, gridCols: actualAcross, gridRows: stackRows,
-            });
-          }
-        }
+  const zoneRects = useMemo((): ZoneRect[] => {
+    if (!wt) return [];
+    const { grid_cols, grid_rows, zone_w_mm, zone_d_mm } = wt;
+    const zoneMap = new Map(wt.positionen.map(p => [p.zone_index, p]));
+    const rects: ZoneRect[] = [];
+    for (let row = 0; row < grid_rows; row++) {
+      for (let col = 0; col < grid_cols; col++) {
+        const idx = row * grid_cols + col;
+        const x = col * (zone_w_mm + DIVIDER_MM);
+        const y = row * (zone_d_mm + DIVIDER_MM);
+        rects.push({ x, y, w: zone_w_mm, h: zone_d_mm, pos: zoneMap.get(idx) ?? null });
       }
     }
-
-    return { stackRects: rects, zones: zoneList };
-  }, [wt, realDepth]);
+    return rects;
+  }, [wt]);
 
   function getColor(pos: WTPosition): string {
     if (colorMode === 'abc') return ABC_COLORS[pos.abc_klasse] ?? '#9ca3af';
     const clusterId = wt?.cluster_id ?? 0;
     return CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
-  }
-
-  // Effective vertical dimension upper bound: max_stapelhoehe = floor(320/vert_mm)
-  function effHeight(pos: WTPosition): string {
-    const s = Math.max(1, pos.max_stapelhoehe ?? 1);
-    return `≤${Math.floor(320 / s)}mm`;
   }
 
   const gewichtPct = wt ? (wt.gesamtgewicht_kg / 24) * 100 : 0;
@@ -256,69 +124,42 @@ export default function WTVisualization() {
             <span>Typ: <strong>{wt.typ}</strong></span>
             <span>Gewicht: <strong>{wt.gesamtgewicht_kg.toFixed(1)} kg</strong></span>
             <span>Fläche: <strong>{wt.flaeche_netto_pct.toFixed(1)}%</strong></span>
+            <span>Grid: <strong>{wt.grid_cols}×{wt.grid_rows}</strong></span>
             <span>Teiler: <strong>{wt.anzahl_teiler}</strong></span>
             <span>Cluster: <strong>{wt.cluster_id}</strong></span>
           </div>
 
-          {/* Top-down view label */}
-          <p className="text-xs text-gray-400 mb-1">Draufsicht — 500 × {realDepth} mm</p>
+          <p className="text-xs text-gray-400 mb-1">Draufsicht — 500 × {wtD_mm} mm</p>
 
           <svg width={svgW} height={svgH} className="border border-gray-300 bg-gray-50 rounded">
-            {/* Stack rectangles */}
-            {stackRects.map((r, i) => (
-              <rect key={i}
-                x={r.x * scale} y={r.y * scale}
-                width={Math.max(1, r.w * scale)} height={Math.max(1, r.h * scale)}
-                fill={getColor(r.pos)}
-                stroke="#fff" strokeWidth={r.compact ? 0 : 0.5}
-                rx={1} opacity={0.85}
-                onMouseEnter={(e) => setTooltip({
-                  x: e.clientX, y: e.clientY,
-                  pos: r.pos,
-                  wtGewicht: wt.gesamtgewicht_kg,
-                  stackInfo: r.compact
-                    ? `${r.totalStacks} Stapel (${r.gridCols}×${r.gridRows}) · ${r.stackItems} Stk`
-                    : `Stapel ${r.stackIndex + 1}/${r.totalStacks} · ${r.stackItems} Stk · ${effHeight(r.pos)} hoch`,
-                })}
-                onMouseLeave={() => setTooltip(null)}
-              />
+            {zoneRects.map((r, i) => (
+              <g key={i}>
+                <rect
+                  x={r.x * scale} y={r.y * scale}
+                  width={Math.max(1, r.w * scale)} height={Math.max(1, r.h * scale)}
+                  fill={r.pos ? getColor(r.pos) : '#f1f5f9'}
+                  stroke={r.pos ? '#fff' : '#94a3b8'}
+                  strokeWidth={0.5}
+                  strokeDasharray={r.pos ? undefined : '3,2'}
+                  rx={1} opacity={r.pos ? 0.85 : 1}
+                  onMouseEnter={r.pos ? (e) => setTooltip({
+                    x: e.clientX, y: e.clientY, pos: r.pos!, wtGewicht: wt.gesamtgewicht_kg,
+                  }) : undefined}
+                  onMouseLeave={r.pos ? () => setTooltip(null) : undefined}
+                  style={r.pos ? { cursor: 'pointer' } : undefined}
+                />
+                {r.pos && r.w * scale > 20 && r.h * scale > 12 && (
+                  <text
+                    x={(r.x + r.w / 2) * scale}
+                    y={(r.y + r.h / 2) * scale}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fontSize={7} fill="rgba(0,0,0,0.6)" pointerEvents="none"
+                  >
+                    {r.pos.stueckzahl}
+                  </text>
+                )}
+              </g>
             ))}
-
-            {/* Compact zone labels */}
-            {stackRects.filter(r => r.compact).map((r, i) => {
-              const cx = (r.x + r.zoneW / 2) * scale;
-              const cy = (r.y + r.zoneH / 2) * scale;
-              return (
-                <g key={`lbl-${i}`} pointerEvents="none">
-                  <text x={cx} y={cy - 5}
-                    textAnchor="middle" dominantBaseline="middle"
-                    fontSize={9} fill="#fff" fontWeight="bold">
-                    {r.totalStacks} Stapel
-                  </text>
-                  <text x={cx} y={cy + 7}
-                    textAnchor="middle" dominantBaseline="middle"
-                    fontSize={8} fill="rgba(255,255,255,0.8)">
-                    ({r.gridCols}×{r.gridRows})
-                  </text>
-                </g>
-              );
-            })}
-
-            {/* Zone dividers: dashed lines at article-zone boundaries */}
-            {zones.map((z, i) => {
-              const next = zones[i + 1];
-              if (!next) return null;
-              const sameShelves = Math.abs(z.y - next.y) < 1;
-              if (!sameShelves) {
-                const lineY = (z.y + z.h + 2.5) * scale;
-                const shelfMaxX = Math.max(z.x + z.w, next.x + next.w) * scale;
-                return <line key={`d-${i}`} x1={0} y1={lineY} x2={shelfMaxX} y2={lineY}
-                  stroke="#94a3b8" strokeWidth={1} strokeDasharray="3,2" />;
-              }
-              const lineX = (z.x + z.w + 2.5) * scale;
-              return <line key={`d-${i}`} x1={lineX} y1={z.y * scale} x2={lineX} y2={(z.y + z.h) * scale}
-                stroke="#94a3b8" strokeWidth={1} strokeDasharray="3,2" />;
-            })}
           </svg>
 
           {/* Weight progress bar */}
@@ -345,10 +186,8 @@ export default function WTVisualization() {
               <span className="inline-block w-3 h-3 rounded-sm bg-gray-400 opacity-85"></span> C-Artikel
             </span>
             <span className="flex items-center gap-1">
-              <span className="inline-block border border-dashed border-gray-400 w-6 h-0 mt-1.5"></span>
-              Teiler (5mm)
+              <span className="inline-block border border-dashed border-gray-400 w-3 h-3 rounded-sm"></span> Freie Zone
             </span>
-            <span className="text-gray-400">□ = 1 Stapel (von oben greifbar)</span>
           </div>
 
           {/* Tooltip */}
@@ -357,12 +196,10 @@ export default function WTVisualization() {
               style={{ left: tooltip.x + 12, top: tooltip.y - 60 }}>
               <p className="font-semibold truncate">{tooltip.pos.bezeichnung}</p>
               <p className="text-gray-300">
-                {tooltip.pos.artikelnummer} · {tooltip.pos.laenge_mm ?? '?'}×{tooltip.pos.breite_mm ?? '?'} mm Grundfläche
+                {tooltip.pos.artikelnummer} · Zone {tooltip.pos.zone_index} · {tooltip.pos.breite_mm}×{tooltip.pos.laenge_mm}×{tooltip.pos.hoehe_mm} mm
               </p>
-              <p className="text-blue-300 mt-0.5">{tooltip.stackInfo}</p>
-              <p className="text-gray-400 mt-0.5">
-                WT gesamt: {tooltip.pos.stueckzahl} Stk · {tooltip.wtGewicht.toFixed(1)} kg
-              </p>
+              <p className="text-blue-300 mt-0.5">{tooltip.pos.stueckzahl} Stk · max. {tooltip.pos.max_stapelhoehe} Stapel</p>
+              <p className="text-gray-400 mt-0.5">WT gesamt: {tooltip.wtGewicht.toFixed(1)} kg</p>
             </div>
           )}
         </div>
@@ -373,22 +210,18 @@ export default function WTVisualization() {
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <h3 className="text-sm font-semibold text-gray-700 mb-2">Positionen auf {wt.id}</h3>
           <div className="space-y-1 text-sm">
-            {wt.positionen.map((p, i) => {
-              const maxStapel = Math.max(1, p.max_stapelhoehe ?? 1);
-              const stacks = Math.ceil(p.stueckzahl / maxStapel);
-              return (
-                <div key={i} className="flex items-center gap-3">
-                  <span className={`px-1.5 py-0.5 rounded text-xs font-bold text-white ${
-                    p.abc_klasse === 'A' ? 'bg-green-500' : p.abc_klasse === 'B' ? 'bg-yellow-500' : 'bg-gray-400'
-                  }`}>{p.abc_klasse}</span>
-                  <span className="font-mono">{p.artikelnummer}</span>
-                  <span className="text-gray-500 truncate flex-1">{p.bezeichnung}</span>
-                  <span className="text-gray-600">{p.stueckzahl} Stk</span>
-                  <span className="text-gray-400 text-xs">{stacks} Stapel</span>
-                  <span className="text-gray-600">{p.gewicht_kg.toFixed(2)} kg</span>
-                </div>
-              );
-            })}
+            {wt.positionen.map((p, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className={`px-1.5 py-0.5 rounded text-xs font-bold text-white ${
+                  p.abc_klasse === 'A' ? 'bg-green-500' : p.abc_klasse === 'B' ? 'bg-yellow-500' : 'bg-gray-400'
+                }`}>{p.abc_klasse}</span>
+                <span className="font-mono">{p.artikelnummer}</span>
+                <span className="text-gray-500 truncate flex-1">{p.bezeichnung}</span>
+                <span className="text-gray-400 text-xs">Z{p.zone_index}</span>
+                <span className="text-gray-600">{p.stueckzahl} Stk</span>
+                <span className="text-gray-600">{p.gewicht_kg.toFixed(2)} kg</span>
+              </div>
+            ))}
           </div>
         </div>
       )}

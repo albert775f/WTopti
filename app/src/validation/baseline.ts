@@ -32,9 +32,6 @@ export function calculateBaseline(
 
       wtCounter++;
       const id = `BL-${String(wtCounter).padStart(4, '0')}`;
-      const stacksNeeded = Math.ceil(place / maxStapel);
-      const usedArea = stacksNeeded * art.laenge_mm * art.breite_mm;
-      const usableArea = KLEIN_AREA;
 
       wts.push({
         id, typ: 'KLEIN', cluster_id: 0,
@@ -45,16 +42,22 @@ export function calculateBaseline(
           grundflaeche_mm2: art.grundflaeche_mm2,
           gewicht_kg: art.gewicht_kg,
           abc_klasse: art.abc_klasse,
+          hoehe_mm: art.hoehe_mm,
           breite_mm: art.breite_mm,
           laenge_mm: art.laenge_mm,
           max_stapelhoehe: art.max_stapelhoehe,
+          zone_index: 0,
         }],
         gesamtgewicht_kg: Math.round(art.gewicht_kg * place * 100) / 100,
         flaeche_brutto_mm2: KLEIN_AREA,
-        flaeche_netto_mm2: Math.round(usableArea),
-        flaeche_netto_pct: Math.min(100, Math.round(usedArea / usableArea * 10000) / 100),
+        flaeche_netto_pct: 100,
         anzahl_teiler: 0,
         gewicht_status: 'ok',
+        grid_cols: 1,
+        grid_rows: 1,
+        zone_count: 1,
+        zone_w_mm: 500,
+        zone_d_mm: 500,
       });
       remaining -= place;
     }

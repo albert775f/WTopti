@@ -114,29 +114,25 @@ function checkC7_FlaechenIntegritaet(wts: WT[]): HardCheckResult {
   const details: HardCheckDetail[] = [];
 
   for (const wt of wts) {
-    const wtArea = wt.typ === 'KLEIN' ? 250000 : 400000;
-    // Shelf model (canFitNewZone/placeNewZone) guarantees geometric validity —
-    // no AREA_USABLE_FRACTION safety fraction needed.
-
-    let usedArea = 0;
-    for (const pos of wt.positionen) {
-      if (pos.zone_w != null && pos.zone_h != null) {
-        usedArea += pos.zone_w * pos.zone_h;
-      } else {
-        const maxStapel = Math.max(1, pos.max_stapelhoehe ?? 1);
-        const stacksNeeded = Math.ceil(pos.stueckzahl / maxStapel);
-        const laenge = pos.laenge_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-        const breite = pos.breite_mm ?? Math.sqrt(pos.grundflaeche_mm2);
-        usedArea += stacksNeeded * laenge * breite;
-      }
+    // Zone count integrity: no more positions than zones
+    if (wt.positionen.length > wt.zone_count) {
+      details.push({
+        key: wt.id,
+        expected: `≤${wt.zone_count} Positionen`,
+        actual: String(wt.positionen.length),
+        message: `WT ${wt.id}: ${wt.positionen.length} Positionen > ${wt.zone_count} Zonen`,
+      });
     }
 
-    if (usedArea > wtArea * 1.01) { // 1% tolerance
+    // Area integrity: all occupied zones must fit on WT (1% tolerance)
+    const usedArea = wt.positionen.length * wt.zone_w_mm * wt.zone_d_mm;
+    const wtArea = wt.flaeche_brutto_mm2;
+    if (usedArea > wtArea * 1.01) {
       details.push({
         key: wt.id,
         expected: `≤${Math.round(wtArea)} mm²`,
         actual: `${Math.round(usedArea)} mm²`,
-        message: `WT ${wt.id} überläuft: ${Math.round(usedArea)} mm² > ${Math.round(wtArea)} mm² nutzbar`,
+        message: `WT ${wt.id} überläuft: ${Math.round(usedArea)} mm² > ${Math.round(wtArea)} mm²`,
       });
     }
   }
