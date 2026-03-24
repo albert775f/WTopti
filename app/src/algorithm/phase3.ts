@@ -293,9 +293,15 @@ function itemsPerZone(
     const fp = dims.filter((_, j) => j !== i) as [number, number];
     for (const [fp1, fp2] of [[fp[0], fp[1]], [fp[1], fp[0]]] as [number, number][]) {
       if (fp1 <= 0 || fp2 <= 0 || fp1 > zoneW || fp2 > zoneD) continue;
-      // At least one side must have >= griffPufferMm free space for gripping
-      if (griffPufferMm > 0 && fp1 > zoneW - griffPufferMm && fp2 > zoneD - griffPufferMm) continue;
-      best = Math.max(best, Math.floor(zoneW / fp1) * Math.floor(zoneD / fp2) * stack);
+      const cols = Math.floor(zoneW / fp1);
+      const rows = Math.floor(zoneD / fp2);
+      // At least one axis must have >= griffPufferMm free space after packing all stacks
+      if (griffPufferMm > 0) {
+        const freiW = zoneW - cols * fp1;
+        const freiD = zoneD - rows * fp2;
+        if (freiW < griffPufferMm && freiD < griffPufferMm) continue;
+      }
+      best = Math.max(best, cols * rows * stack);
     }
   }
   return best;
