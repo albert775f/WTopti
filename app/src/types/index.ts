@@ -75,14 +75,11 @@ export interface WTPosition {
   grundflaeche_mm2: number;
   gewicht_kg: number;
   abc_klasse: 'A' | 'B' | 'C';
-  breite_mm?: number;      // strip depth (article breite, for balancing + visualization)
-  laenge_mm?: number;      // article length (for strip-aware visualization)
-  max_stapelhoehe?: number; // floor(320/hoehe_mm) (for strip capacity in visualization)
-  // Zone layout coords set by phase3 (used by WTVisualization to render 1:1 without re-layout)
-  zone_x?: number;         // x offset on WT (mm from left edge)
-  zone_y?: number;         // y offset on WT (mm from front/top edge)
-  zone_w?: number;         // zone width mm
-  zone_h?: number;         // zone depth mm
+  hoehe_mm: number;        // vertical dimension of article
+  breite_mm: number;       // footprint dimension
+  laenge_mm: number;       // footprint dimension
+  max_stapelhoehe: number; // floor(320/hoehe_mm)
+  zone_index: number;      // 0-based zone index on this WT
 }
 
 export interface WT {
@@ -92,10 +89,14 @@ export interface WT {
   cluster_id: number;
   gesamtgewicht_kg: number;
   flaeche_brutto_mm2: number;     // 250000 (K) oder 400000 (G)
-  flaeche_netto_mm2: number;      // nach Teilerabzug
-  flaeche_netto_pct: number;      // Auslastung %
-  anzahl_teiler: number;
+  flaeche_netto_pct: number;      // % of zones occupied (positionen.length / zone_count * 100)
+  anzahl_teiler: number;          // (cols-1) + (rows-1)
   gewicht_status: 'ok' | 'soft_warn' | 'hard_fail';
+  grid_cols: number;              // grid columns
+  grid_rows: number;              // grid rows
+  zone_count: number;             // grid_cols * grid_rows
+  zone_w_mm: number;              // uniform zone width
+  zone_d_mm: number;              // uniform zone depth
 }
 
 // ============ OUTPUT 1: BELEGUNGSPLAN ============
