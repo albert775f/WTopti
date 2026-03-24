@@ -1,6 +1,6 @@
 import type {
   WTConfig, OptimizationResult, ArtikelProcessed,
-  WTRatioRecommendation, ArticleCost,
+  WTRatioResult, ArticleCost,
 } from '../types';
 import { KLEIN_AREA, GROSS_AREA, KLEIN_FLOOR_M2, GROSS_FLOOR_M2, AREA_USABLE_FRACTION, itemsPerWT2D } from './phase3';
 
@@ -58,99 +58,117 @@ export function computeArticleCosts(
 }
 
 /**
- * Phase 5: Compute optimal KLEIN/GROSS ratio analytically from article costs.
- * No full pipeline re-runs — pure floor-area minimisation within warehouse area constraint.
+ * Phase 5: Bottom-up WT ratio calculator.
+ *
+ * Step 1 — Demand: sum what the current stock actually needs (no budget constraint).
+ * Step 2 — Scale: project the demand ratio onto the full warehouse floor area.
+ *
+ * Result is the recommended purchase quantity for KLEIN and GROSS WTs.
  */
 export function processPhase5(
-  baseResult: OptimizationResult,
+  _baseResult: OptimizationResult,
   config: WTConfig,
   processed: ArtikelProcessed[],
-): { recommendation: WTRatioRecommendation; articleCosts: ArticleCost[] } {
+): { ratioResult: WTRatioResult; articleCosts: ArticleCost[] } {
   const articleCosts = computeArticleCosts(processed, config);
 
-  // ── Current state (from actual packing run) ──────────────────────────────
-  const current_klein = baseResult.stats.wts_klein;
-  const current_gross = baseResult.stats.wts_gross;
-  const current_area_m2 = Math.round((current_klein * KLEIN_FLOOR_M2 + current_gross * GROSS_FLOOR_M2) * 100) / 100;
-  const current_area_free_m2 = Math.round((WAREHOUSE_AREA_M2 - current_area_m2) * 100) / 100;
-  const current_area_free_pct = Math.round((current_area_free_m2 / WAREHOUSE_AREA_M2) * 1000) / 10;
-
-  // ── Optimal state (analytical) ───────────────────────────────────────────
-  // Assign each article to its best_type (floor-area minimisation, no budget constraint).
+  // ── Step 1: Demand ────────────────────────────────────────────────────────
   const grossArticles = articleCosts.filter(c => c.best_type === 'GROSS');
   const kleinArticles = articleCosts.filter(c => c.best_type === 'KLEIN');
-
-  let optimal_gross = grossArticles.reduce((s, c) => s + c.n_gross, 0);
-  let optimal_klein = kleinArticles.reduce((s, c) => s + c.n_klein, 0);
 
   const articles_must_gross = grossArticles.filter(c => !c.fits_klein).length;
   const articles_prefer_gross = grossArticles.filter(c => c.fits_klein).length;
   const articles_on_klein = kleinArticles.length;
 
-  // Enforce area constraint: if optimal exceeds WAREHOUSE_AREA_M2, shift cheapest GROSS→KLEIN
-  let optimal_area_m2 = optimal_klein * KLEIN_FLOOR_M2 + optimal_gross * GROSS_FLOOR_M2;
-  if (optimal_area_m2 > WAREHOUSE_AREA_M2) {
+  let demand_klein = kleinArticles.reduce((s, c) => s + c.n_klein, 0);
+  let demand_gross = grossArticles.reduce((s, c) => s + c.n_gross, 0);
+  let demand_area = demand_klein * KLEIN_FLOOR_M2 + demand_gross * GROSS_FLOOR_M2;
+
+  // Handle overflow: shift GROSS → KLEIN (smallest area savings first)
+  if (demand_area > WAREHOUSE_AREA_M2) {
     const shiftable = [...grossArticles]
       .filter(c => c.fits_klein && c.n_klein > 0)
-      .sort((a, b) => a.area_saving - b.area_saving); // smallest savings shifted first
+      .sort((a, b) => a.area_saving - b.area_saving);
     for (const c of shiftable) {
-      if (optimal_area_m2 <= WAREHOUSE_AREA_M2) break;
-      optimal_gross -= c.n_gross;
-      optimal_klein += c.n_klein;
-      optimal_area_m2 = optimal_klein * KLEIN_FLOOR_M2 + optimal_gross * GROSS_FLOOR_M2;
+      if (demand_area <= WAREHOUSE_AREA_M2) break;
+      demand_gross -= c.n_gross;
+      demand_klein += c.n_klein;
+      demand_area = demand_klein * KLEIN_FLOOR_M2 + demand_gross * GROSS_FLOOR_M2;
     }
   }
 
-  optimal_area_m2 = Math.round((optimal_klein * KLEIN_FLOOR_M2 + optimal_gross * GROSS_FLOOR_M2) * 100) / 100;
-  const optimal_area_free_m2 = Math.round((WAREHOUSE_AREA_M2 - optimal_area_m2) * 100) / 100;
-  const optimal_area_free_pct = Math.round((optimal_area_free_m2 / WAREHOUSE_AREA_M2) * 1000) / 10;
-  const optimal_fits = optimal_area_m2 <= WAREHOUSE_AREA_M2;
+  const fits_warehouse = demand_area <= WAREHOUSE_AREA_M2;
+  const overflow_m2 = fits_warehouse ? 0 : Math.round((demand_area - WAREHOUSE_AREA_M2) * 100) / 100;
 
-  const klein_saved = current_klein - optimal_klein;
-  const gross_delta = optimal_gross - current_gross;
-  const area_saved_m2 = Math.round((current_area_m2 - optimal_area_m2) * 100) / 100;
+  // ── Step 2: Scale to warehouse capacity ───────────────────────────────────
+  let scaled_klein: number;
+  let scaled_gross: number;
+
+  if (demand_area <= 0) {
+    scaled_klein = Math.floor(WAREHOUSE_AREA_M2 / KLEIN_FLOOR_M2);
+    scaled_gross = 0;
+  } else if (!fits_warehouse) {
+    // Still overflowing after shifts — report demand as-is, no scaling possible
+    scaled_klein = demand_klein;
+    scaled_gross = demand_gross;
+  } else {
+    const ratio_klein = (demand_klein * KLEIN_FLOOR_M2) / demand_area;
+    const ratio_gross = (demand_gross * GROSS_FLOOR_M2) / demand_area;
+
+    scaled_klein = Math.floor((ratio_klein * WAREHOUSE_AREA_M2) / KLEIN_FLOOR_M2);
+    scaled_gross = Math.floor((ratio_gross * WAREHOUSE_AREA_M2) / GROSS_FLOOR_M2);
+
+    // Distribute rounding remainder to KLEIN (smaller granularity)
+    const used = scaled_klein * KLEIN_FLOOR_M2 + scaled_gross * GROSS_FLOOR_M2;
+    const remaining = WAREHOUSE_AREA_M2 - used;
+    scaled_klein += Math.floor(remaining / KLEIN_FLOOR_M2);
+  }
+
+  const scaled_area = scaled_klein * KLEIN_FLOOR_M2 + scaled_gross * GROSS_FLOOR_M2;
+
+  const demand_area_m2 = Math.round(demand_area * 100) / 100;
+  const demand_area_pct = Math.round((demand_area / WAREHOUSE_AREA_M2) * 1000) / 10;
+  const scaled_area_m2 = Math.round(scaled_area * 100) / 100;
+  const reserve_klein = scaled_klein - demand_klein;
+  const reserve_gross = scaled_gross - demand_gross;
+  const reserve_area_m2 = Math.round((scaled_area - demand_area) * 100) / 100;
 
   const top_gross_examples = articleCosts
     .filter(c => c.best_type === 'GROSS' && c.fits_klein && c.area_saving > 0)
     .sort((a, b) => b.area_saving - a.area_saving)
     .slice(0, 3);
 
-  let empfehlung: string;
-  if (!optimal_fits) {
-    empfehlung = `Bestand überschreitet verfügbare Lagerfläche (${WAREHOUSE_AREA_M2} m²). Bestandsreduzierung erforderlich.`;
-  } else if (klein_saved > 0 || gross_delta > 0) {
-    const parts: string[] = [];
-    if (gross_delta > 0) parts.push(`+${gross_delta} GROSS`);
-    if (klein_saved > 0) parts.push(`−${klein_saved} KLEIN`);
-    empfehlung = `Optimales Verhältnis: ${parts.join(', ')}. Einsparung ${area_saved_m2.toFixed(1)} m² Lagerfläche.`;
-  } else if (klein_saved < 0 || gross_delta < 0) {
-    empfehlung = `Aktuelle Konfiguration hat mehr WTs als analytisch benötigt — Konsolidierungspotenzial vorhanden.`;
+  let recommendation: string;
+  if (!fits_warehouse) {
+    recommendation = `Bestand überschreitet verfügbare Lagerfläche um ${overflow_m2.toFixed(1)} m². Bestandsreduzierung erforderlich.`;
   } else {
-    empfehlung = `Aktuelle Konfiguration entspricht dem analytisch optimalen Verhältnis.`;
+    recommendation = `Empfehlung: ${scaled_klein.toLocaleString('de-DE')} KLEIN + ${scaled_gross.toLocaleString('de-DE')} GROSS WTs beschaffen. Aktueller Bestand belegt ${demand_area_pct.toFixed(1)}% der Lagerfläche.`;
   }
 
-  const recommendation: WTRatioRecommendation = {
+  const ratioResult: WTRatioResult = {
     warehouse_area_m2: WAREHOUSE_AREA_M2,
-    current_klein,
-    current_gross,
-    current_area_m2,
-    current_area_free_m2,
-    current_area_free_pct,
-    optimal_klein,
-    optimal_gross,
-    optimal_area_m2,
-    optimal_area_free_m2,
-    optimal_area_free_pct,
-    optimal_fits,
+    demand_klein,
+    demand_gross,
+    demand_area_m2,
+    demand_area_pct,
+    scaled_klein,
+    scaled_gross,
+    scaled_area_m2,
+    reserve_klein,
+    reserve_gross,
+    reserve_area_m2,
     articles_must_gross,
     articles_prefer_gross,
     articles_on_klein,
-    klein_saved,
-    gross_delta,
-    area_saved_m2,
+    config_klein: config.anzahl_klein,
+    config_gross: config.anzahl_gross,
+    delta_klein: scaled_klein - config.anzahl_klein,
+    delta_gross: scaled_gross - config.anzahl_gross,
+    fits_warehouse,
+    overflow_m2,
     top_gross_examples,
-    empfehlung,
+    recommendation,
   };
 
-  return { recommendation, articleCosts };
+  return { ratioResult, articleCosts };
 }

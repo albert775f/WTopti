@@ -131,45 +131,42 @@ export interface ArticleCost {
   is_weight_limited: boolean; // items_per_klein === items_per_gross (weight cap dominates)
 }
 
-export interface WTRatioRecommendation {
-  warehouse_area_m2: number;        // hardcoded STOROJET total floor area (1480.65 m²)
-  // Current run (actual packed WTs)
-  current_klein: number;
-  current_gross: number;
-  current_area_m2: number;
-  current_area_free_m2: number;
-  current_area_free_pct: number;
-  // Optimal (analytical floor-cost minimisation, no budget constraint)
-  optimal_klein: number;
-  optimal_gross: number;
-  optimal_area_m2: number;
-  optimal_area_free_m2: number;
-  optimal_area_free_pct: number;
-  optimal_fits: boolean;            // true if optimal fits within warehouse_area_m2
+export interface WTRatioResult {
+  warehouse_area_m2: number;          // 1480.65
+
+  // Step 1: What the stock demands (unconstrained)
+  demand_klein: number;               // WTs needed for KLEIN-optimal articles
+  demand_gross: number;               // WTs needed for GROSS-optimal articles
+  demand_area_m2: number;             // total floor area the stock needs
+  demand_area_pct: number;            // demand_area / warehouse_area × 100
+
+  // Step 2: Scaled to warehouse capacity
+  scaled_klein: number;               // recommended KLEIN count (purchase number)
+  scaled_gross: number;               // recommended GROSS count (purchase number)
+  scaled_area_m2: number;             // should ≈ warehouse_area_m2
+
+  // Reserve (scaled − demand = spare WTs for growth)
+  reserve_klein: number;
+  reserve_gross: number;
+  reserve_area_m2: number;
+
   // Breakdown
-  articles_must_gross: number;      // articles that only fit on GROSS
-  articles_prefer_gross: number;    // articles that fit both but GROSS saves floor space
+  articles_must_gross: number;
+  articles_prefer_gross: number;
   articles_on_klein: number;
-  klein_saved: number;              // current_klein − optimal_klein (positive = potential reduction)
-  gross_delta: number;              // optimal_gross − current_gross
-  area_saved_m2: number;            // current_area − optimal_area
+
+  // Comparison to current config (informational only)
+  config_klein: number;
+  config_gross: number;
+  delta_klein: number;               // scaled_klein − config_klein
+  delta_gross: number;               // scaled_gross − config_gross
+
+  // Status
+  fits_warehouse: boolean;           // demand_area ≤ warehouse_area (after best-effort shift)
+  overflow_m2: number;               // if > 0: demand exceeds warehouse
+
   top_gross_examples: ArticleCost[];
-  empfehlung: string;
-}
-
-// ============ OUTPUT 2: SZENARIO-ERGEBNIS ============
-
-export interface SzenarioResult {
-  szenario: string;
-  anzahl_klein: number;
-  anzahl_gross: number;
-  stellplaetze_k_aequiv: number;  // K + G×1.5
-  auslastung_flaeche_avg: number; // %
-  auslastung_gewicht_avg: number; // %
-  wts_ungenutzt: number;
-  wts_ueberlast: number;          // 20-24 kg
-  co_occurrence_score: number;
-  empfehlung: string;
+  recommendation: string;
 }
 
 // ============ EXCLUSION LOG TYPES ============
@@ -211,7 +208,6 @@ export interface ValidationResult {
 export interface OptimizationResult {
   wts: WT[];
   belegungsplan: BelegungsplanRow[];
-  szenarien: SzenarioResult[];
   validation: ValidationResult;
   stats: {
     artikel_gesamt: number;
@@ -223,7 +219,7 @@ export interface OptimizationResult {
   };
   validation_dashboard?: ValidationDashboardData;
   coMatrix?: Record<string, Record<string, number>>;
-  wt_recommendation?: WTRatioRecommendation;
+  wt_ratio?: WTRatioResult;
   article_costs?: ArticleCost[];
 }
 

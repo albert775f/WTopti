@@ -122,7 +122,6 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     const baseResult: OptimizationResult = {
       wts,
       belegungsplan,
-      szenarien: [],
       validation,
       stats: {
         artikel_gesamt: artikel.length,
@@ -134,10 +133,10 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       },
     };
 
-    const { recommendation, articleCosts } = processPhase5(
+    const { ratioResult, articleCosts } = processPhase5(
       baseResult, config, phase1Result.processed,
     );
-    baseResult.wt_recommendation = recommendation;
+    baseResult.wt_ratio = ratioResult;
     baseResult.article_costs = articleCosts;
 
     // Compute validation dashboard
