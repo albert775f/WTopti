@@ -5,7 +5,6 @@ import type { ClusterResult } from './phase2';
 const WT_WIDTH = 500;
 const WT_DEPTH_KLEIN = 500;
 const WT_DEPTH_GROSS = 800;
-const DIVIDER_MM = 5; // gap between zones (shelf divider width)
 const MAX_HEIGHT_MM = 320; // maximum vertical dimension for any article
 
 // Area constants for floor-cost calculations (phase5)
@@ -240,6 +239,7 @@ interface WTState {
   usedArea: number;
   wtWidth: number;
   wtDepth: number;
+  dividerMm: number;
 }
 
 function updateWTMetrics(wtState: WTState, config: WTConfig): void {
@@ -259,23 +259,25 @@ function updateWTMetrics(wtState: WTState, config: WTConfig): void {
 }
 
 function canFitNewZone(state: WTState, zoneW: number, zoneH: number): boolean {
+  const divMm = state.dividerMm;
   // Try current shelf (append to right)
   const xOffset = state.currentShelfUsedWidth > 0
-    ? state.currentShelfUsedWidth + DIVIDER_MM
+    ? state.currentShelfUsedWidth + divMm
     : 0;
   if (xOffset + zoneW <= state.wtWidth) {
     const newShelfH = Math.max(state.currentShelfHeight, zoneH);
     if (state.completedShelvesDepth + newShelfH <= state.wtDepth) return true;
   }
   // Try new shelf below
-  const div = state.currentShelfHeight > 0 ? DIVIDER_MM : 0;
+  const div = state.currentShelfHeight > 0 ? divMm : 0;
   const newShelfY = state.completedShelvesDepth + state.currentShelfHeight + div;
   return newShelfY + zoneH <= state.wtDepth && zoneW <= state.wtWidth;
 }
 
 function placeNewZone(state: WTState, zoneW: number, zoneH: number): { x: number; y: number } {
+  const divMm = state.dividerMm;
   const xOffset = state.currentShelfUsedWidth > 0
-    ? state.currentShelfUsedWidth + DIVIDER_MM
+    ? state.currentShelfUsedWidth + divMm
     : 0;
   if (xOffset + zoneW <= state.wtWidth) {
     const newShelfH = Math.max(state.currentShelfHeight, zoneH);
@@ -287,7 +289,7 @@ function placeNewZone(state: WTState, zoneW: number, zoneH: number): { x: number
     }
   }
   // Start new shelf
-  const div = state.currentShelfHeight > 0 ? DIVIDER_MM : 0;
+  const div = state.currentShelfHeight > 0 ? divMm : 0;
   const newY = state.completedShelvesDepth + state.currentShelfHeight + div;
   state.completedShelvesDepth = newY;
   state.currentShelfUsedWidth = zoneW;
@@ -523,8 +525,30 @@ export function processPhase3(
   }
 
   for (const [clusterId, articles] of clusterGroups) {
-    // Sort by zone footprint descending (First Fit Decreasing)
-    const sorted = [...articles].sort((a, b) => b.grundflaeche_mm2 - a.grundflaeche_mm2);
+    // Pre-compute KLEIN-oriented footprint for FFD sort (fall back to GROSS, then original)
+    const orientedFootprint = new Map<string, number>();
+    for (const art of articles) {
+      const orientK = bestArticleOrientation(
+        art.hoehe_mm, art.breite_mm, art.laenge_mm,
+        art.gewicht_kg, WT_WIDTH, WT_DEPTH_KLEIN,
+        config.gewicht_hard_kg, config.min_segment_mm,
+      );
+      if (orientK) {
+        orientedFootprint.set(String(art.artikelnummer), orientK.grundflaeche_mm2);
+      } else {
+        const orientG = bestArticleOrientation(
+          art.hoehe_mm, art.breite_mm, art.laenge_mm,
+          art.gewicht_kg, WT_WIDTH, WT_DEPTH_GROSS,
+          config.gewicht_hard_kg, config.min_segment_mm,
+        );
+        orientedFootprint.set(String(art.artikelnummer), orientG?.grundflaeche_mm2 ?? art.grundflaeche_mm2);
+      }
+    }
+    // Sort by oriented footprint descending (First Fit Decreasing)
+    const sorted = [...articles].sort((a, b) =>
+      (orientedFootprint.get(String(b.artikelnummer)) ?? b.grundflaeche_mm2)
+      - (orientedFootprint.get(String(a.artikelnummer)) ?? a.grundflaeche_mm2),
+    );
 
     const clusterWTStates: WTState[] = [];
 
@@ -661,6 +685,7 @@ export function processPhase3(
             usedArea: 0,
             wtWidth: WT_WIDTH,
             wtDepth: newDepth,
+            dividerMm: config.teiler_breite_mm,
           };
 
           const { x: zoneX2, y: zoneY2 } = placeNewZone(newState, zoneW, zoneH);

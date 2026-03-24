@@ -65,6 +65,23 @@ export function processPhase1(
     bestandMap.set(String(b.artikelnummer), b.bestand);
   }
 
+  // Also detect SON articles directly from Artikelliste (may have stock but no orders)
+  for (const art of artikel) {
+    const artNr = String(art.artikelnummer);
+    const bez = art.bezeichnung ?? '';
+    if (bez.startsWith('SON ') && !sonArticles.has(artNr)) {
+      sonArticles.set(artNr, bez);
+      exclusionLog.push({
+        artikelnummer: artNr,
+        bezeichnung: bez,
+        exclusion_reason: 'SON_ARTICLE',
+        exclusion_phase: 'FILTER',
+        bestand: bestandMap.get(artNr) ?? 0,
+        detail: 'SON-Artikel — nicht ins Automatiklager',
+      });
+    }
+  }
+
   // Compute umsatz_gesamt from filtered order history (SON removed)
   const umsatzMap = new Map<string, number>();
   for (const b of filteredBestellungen) {
@@ -120,6 +137,9 @@ export function processPhase1(
     const bestandVal = bestandMap.get(artNr) ?? 0;
 
     if (bestandVal <= 0) continue;
+
+    // SON article: already excluded and logged above
+    if (sonArticles.has(artNr)) continue;
 
     const bez = art.bezeichnung || '— unknown —';
 

@@ -17,9 +17,8 @@ export function calculateBaseline(
     if (!art.gewicht_kg || art.grundflaeche_mm2 <= 0) continue;
 
     const KLEIN_AREA = 250000;
-    const AREA_USABLE = 0.92;
     const maxStapel = Math.max(1, art.max_stapelhoehe);
-    const maxStacksGeom = Math.floor((KLEIN_AREA * AREA_USABLE) / (art.laenge_mm * art.breite_mm));
+    const maxStacksGeom = Math.floor(KLEIN_AREA / (art.laenge_mm * art.breite_mm));
     const maxItemsGeom = maxStacksGeom * maxStapel;
     const maxItemsWeight = art.gewicht_kg > 0 ? Math.floor(config.gewicht_hard_kg / art.gewicht_kg) : 999999;
     const maxPerWT = Math.max(1, Math.min(maxItemsGeom, maxItemsWeight));
@@ -35,7 +34,7 @@ export function calculateBaseline(
       const id = `BL-${String(wtCounter).padStart(4, '0')}`;
       const stacksNeeded = Math.ceil(place / maxStapel);
       const usedArea = stacksNeeded * art.laenge_mm * art.breite_mm;
-      const usableArea = KLEIN_AREA * AREA_USABLE;
+      const usableArea = KLEIN_AREA;
 
       wts.push({
         id, typ: 'KLEIN', cluster_id: 0,

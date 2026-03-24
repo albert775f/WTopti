@@ -2,9 +2,7 @@ import type {
   WTConfig, OptimizationResult, ArtikelProcessed,
   WTRatioResult, ArticleCost,
 } from '../types';
-import { KLEIN_AREA, GROSS_AREA, KLEIN_FLOOR_M2, GROSS_FLOOR_M2, AREA_USABLE_FRACTION, itemsPerWT2D } from './phase3';
-
-export { AREA_USABLE_FRACTION };
+import { KLEIN_AREA, GROSS_AREA, KLEIN_FLOOR_M2, GROSS_FLOOR_M2, itemsPerWT2D } from './phase3';
 
 /** Total STOROJET rack floor area — hardcoded, cannot be exceeded. */
 export const WAREHOUSE_AREA_M2 = 1480.65;
