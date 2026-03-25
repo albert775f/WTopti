@@ -17,7 +17,7 @@ cd server && npm run dev   # Port 3001
 cd app && npm run dev      # Port 5173
 cd app && npm run build    # Production Build (tsc -b && vite build)
 ```
-Build zuletzt sauber (~40 Commits, 0 TS-Fehler). Remote: `https://github.com/albert775f/WTopti.git`
+Build zuletzt sauber (~48 Commits, 0 TS-Fehler). Remote: `https://github.com/albert775f/WTopti.git`
 
 ## Dateistruktur
 ```
@@ -56,7 +56,7 @@ WTopti/
         │   ├── ABCSection.tsx           # ABC-Analyse Charts + Tabelle
         │   ├── CoOccurrenceSection.tsx  # SVG Heatmap
         │   ├── BelegungsplanSection.tsx # WT-Tabelle expandierbar + CSV-Export
-        │   ├── WTVisualization.tsx      # SVG 2D Draufsicht (strip-aware, orientierungskorrigiert)
+        │   ├── WTVisualization.tsx      # SVG 2D Draufsicht (grid-aware, Stapel als Sub-Rects, Freiraum sichtbar)
         │   └── WTRatioSection.tsx       # Szenarien-Vergleich + Simulator
         ├── App.tsx                  # Sidebar-Layout + Progress-Overlay
         └── main.tsx                 # AppProvider-Wrapper
@@ -113,6 +113,7 @@ const DEFAULT_CONFIG: WTConfig = {
   co_occurrence_schwellwert: 3,
   a_artikel_scatter_n: 3,        // A-Artikel auf N WTs verteilen
   warehouse_area_m2: 1480.65,
+  griff_puffer_mm: 0,            // mind. eine Seite jedes Fachs muss >= puffer frei sein (0 = deaktiviert)
 };
 ```
 
@@ -126,26 +127,45 @@ const DEFAULT_CONFIG: WTConfig = {
 - ABC via kumuliertem Umsatzanteil: A=20%, B=30%, C=50%
 - Alle ausgeschlossenen Artikel im `exclusion_log` mit Grund erfasst
 
-### Phase 3 — FFD Bin Packing (Streifenmodell)
-- **3D-Orientierung** (`bestArticleOrientation`): alle 6 Kombinationen (3 Achsen × 2 Grundflächen-Rotationen), wählt max. Items pro WT
-- `WTPosition` speichert: `laenge_mm = h1_mm` (quer zur WT-Breite), `breite_mm = h2_mm` (entlang WT-Tiefe), `max_stapelhoehe`
-- **`zoneLayout`**: versucht beide Grundflächen-Orientierungen, wählt kleinste Tiefe — **wichtig für Viz**
-- **`maxExpandable`**: begrenzt Expansion auf bereits allozierte Stapel (verhindert Flächenüberlauf)
-- **Gewichts-Balancing**: leichteste Position von überlasteten WTs verschieben
-- **Konsolidierung**: WTs < 30% Auslastung zusammenführen
+### Phase 3 — FFD Bin Packing (Uniform Grid Modell)
+Phase 3 wurde auf ein **Uniform Grid Modell** umgestellt. Jeder Artikel bekommt genau eine Zone pro WT. Alle Zonen sind gleich groß (reguläres Gitter).
+
+**Kernfunktionen:**
+- **`bestGrid(n, wtW, wtD, dividerMm, minZoneMm)`**: findet optimales cols×rows-Layout für N Zonen, maximiert Zonenfläche
+- **`itemsPerZone(h, b, l, zoneW, zoneD, griffPufferMm)`**: reine Geometrie, alle 6 Orientierungen, gibt max. Items in einer Zone zurück
+  - `griff_puffer_mm`: Orientierung nur gültig wenn mind. eine Achse `freiraum = zoneW - cols*fp1 >= puffer` hat (Rest nach allen Stapeln, nicht einzelner Footprint)
+- **`tryAddArticleToWT`**: fügt Artikel zu bestehendem WT hinzu — prüft ob alle existierenden Positionen noch in kleinere Zonen passen
+- **`tryMovePositionToWT`**: verschiebt WTPosition (vollständig) von Quell-WT zu Ziel-WT
+
+**WT-Felder (Grid):** `grid_cols`, `grid_rows`, `zone_count`, `zone_w_mm`, `zone_d_mm`, `anzahl_teiler`
+**WTPosition-Felder:** `zone_index` (0-basiert, wird bei Moves neu vergeben)
+**`flaeche_netto_pct`**: `positionen.length / zone_count * 100` (Zonen-Slot-Auslastung, keine Flächen-%)
+
+**Algorithmus-Ablauf:**
+1. `planWTTypes`: WT-Typ via Flächenkosten-Minimierung vorplanen
+2. `scatterAArtikel`: A-Artikel auf N WTs aufteilen
+3. FFD-Schleife (pro Cluster, nach orientiertem Footprint absteigend sortiert):
+   - Phase A: Artikel auf existierende Cluster-WTs platzieren
+   - Phase B: Neuen WT erstellen wenn nötig
+4. **Gewichts-Balancing**: leichteste Position von überlasteten WTs auf leichte WTs verschieben
+5. **Konsolidierung**: WTs < 30% Auslastung zusammenführen (kein `break` nach fehlgeschlagenem Move)
+
+**C7 Flächenintegrität**: prüft `zone_count * zone_w_mm * zone_d_mm ≤ WT-Fläche` (alle Slots, nicht nur belegte)
 
 ### Validation Dashboard (C1–C8 + M1–M10)
-- `hardChecks.ts`: C1 Bestandsvollständigkeit, C2 Gewicht, C3 Höhe (min-Dim!), C4 ID-Eindeutigkeit, C5 Artikelreferenz, C6 Keine leeren WTs, C7 Flächenintegrität (1% Toleranz, kein AREA_USABLE_FRACTION), C8 Constraint-Einhaltung
+- `hardChecks.ts`: C1 Bestandsvollständigkeit, C2 Gewicht, C3 Höhe (min-Dim!), C4 ID-Eindeutigkeit, C5 Artikelreferenz, C6 Keine leeren WTs, C7 Flächenintegrität (1% Toleranz, `zone_count * zone_w_mm * zone_d_mm`, kein AREA_USABLE_FRACTION), C8 Constraint-Einhaltung
 
 ## WTVisualization — wichtige Implementierungsdetails
-- `pickZoneLayout()` in der Viz spiegelt `zoneLayout()` aus phase3: probiert beide Orientierungen, wählt min. Tiefe → verhindert Slivers
-- Zonen sortiert nach aufsteigender Höhe (shallowest first) → kurze Zonen zuerst sichtbar
+- Rendert uniformes Gitter: graue Zonen-Backgrounds (Freiraum sichtbar) + farbige Stapel-Sub-Rects overlay
+- **`bestStackLayout()`** in der Viz: berechnet fp1/fp2/gridCols/gridRows innerhalb der Zone-Dimensionen (spiegelt `itemsPerZone`-Logik)
+- Zonen aus `zone_index` auf WT, Zonen-Positionen aus `grid_cols`/`grid_rows`/`zone_w_mm`/`zone_d_mm`
+- `COMPACT_THRESHOLD = 30`: ab 30 Stapeln als einzelnes Rect mit Text-Label
 - Bei Overflow: `continue` (nicht `break`) — überspringt unpassende Zonen, rendert restliche
-- `COMPACT_THRESHOLD = 30`: ab 30 Stapeln als einzelnes Rect mit Grid-Overlay
 - Legende unter SVG: A/B/C Farben, Teiler-Erklärung
+- Tooltip: Stapel-Index, Items pro Stapel, Zonen-Dimensionen
 
 ## Git-Status
-- Branch: `main`, ~42 Commits, clean
+- Branch: `main`, ~48 Commits, clean
 - Remote: `https://github.com/albert775f/WTopti.git` (privat)
 
 ## Offene Punkte (aus Spec Section 8)
