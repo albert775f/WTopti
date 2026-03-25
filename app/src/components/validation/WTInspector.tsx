@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { WT } from '../../types';
+import { isRedFlagWT } from '../../utils/wtMaps';
 
 const AMPEL_COLORS = { green: '#22c55e', yellow: '#eab308', red: '#ef4444' };
 const ABC_COLORS: Record<string, string> = { A: '#22c55e', B: '#eab308', C: '#9ca3af' };
@@ -20,19 +21,11 @@ export default function WTInspector({ wts, initialWTId }: Props) {
 
   const filteredWTs = useMemo(() => {
     if (!redFlagOnly) return wts;
-    return wts.filter(w =>
-      w.gesamtgewicht_kg > 20 ||
-      (w.positionen.length > 0 && w.flaeche_netto_pct < 30) ||
-      w.positionen.length === 1
-    );
+    return wts.filter(w => isRedFlagWT(w, 20));
   }, [wts, redFlagOnly]);
 
   const redFlagCount = useMemo(() =>
-    wts.filter(w =>
-      w.gesamtgewicht_kg > 20 ||
-      (w.positionen.length > 0 && w.flaeche_netto_pct < 30) ||
-      w.positionen.length === 1
-    ).length,
+    wts.filter(w => isRedFlagWT(w, 20)).length,
   [wts]);
 
   const handleSearch = () => {
@@ -78,9 +71,7 @@ export default function WTInspector({ wts, initialWTId }: Props) {
 
   const ampels = [
     { label: 'Gewicht', ok: wt ? wt.gesamtgewicht_kg <= 24 : true },
-    { label: 'Höhe', ok: true },
     { label: 'Fläche', ok: wt ? wt.flaeche_netto_pct <= 100 : true },
-    { label: 'Constraints', ok: true },
   ];
 
   if (filteredWTs.length === 0) {

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { WT } from '../../types';
+import { buildArtToFirstWT, getSortedPairs } from '../../utils/wtMaps';
 
 type CoOccurrenceMatrix = Record<string, Record<string, number>>;
 
@@ -11,26 +12,18 @@ interface Props {
 
 export default function CoOccurrenceChecker({ wts, coMatrix, artikelBezeichnungen }: Props) {
   const { pairs, artToWT, artToCluster } = useMemo(() => {
-    const artToWT = new Map<string, string>();
+    const artToWT = buildArtToFirstWT(wts);
     const artToCluster = new Map<string, number>();
     for (const wt of wts) {
       for (const pos of wt.positionen) {
-        if (!artToWT.has(pos.artikelnummer)) {
-          artToWT.set(pos.artikelnummer, wt.id);
+        if (!artToCluster.has(pos.artikelnummer)) {
           artToCluster.set(pos.artikelnummer, wt.cluster_id);
         }
       }
     }
 
-    const allPairs: Array<{ a: string; b: string; score: number }> = [];
-    for (const [artA, row] of Object.entries(coMatrix)) {
-      for (const [artB, score] of Object.entries(row)) {
-        if (artA < artB) allPairs.push({ a: artA, b: artB, score });
-      }
-    }
-    allPairs.sort((x, y) => y.score - x.score);
-
-    return { pairs: allPairs.slice(0, 50), artToWT, artToCluster };
+    const allPairs = getSortedPairs(coMatrix, 50);
+    return { pairs: allPairs, artToWT, artToCluster };
   }, [wts, coMatrix]);
 
   const sameWTCount = pairs.filter(p => artToWT.get(p.a) && artToWT.get(p.a) === artToWT.get(p.b)).length;

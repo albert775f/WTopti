@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { WT, BestellungData } from '../../types';
+import { buildArtToWTList } from '../../utils/wtMaps';
 
 interface Props {
   wts: WT[];
@@ -12,16 +13,7 @@ export default function OrderSimulator({ wts, bestellungen }: Props) {
   const [manualInput, setManualInput] = useState('');
   const [result, setResult] = useState<Array<{ artikel: string; wtIds: string[]; wtTyp: string }> | null>(null);
 
-  const artikelToWTs = useMemo(() => {
-    const m = new Map<string, { id: string; typ: string }[]>();
-    for (const wt of wts) {
-      for (const pos of wt.positionen) {
-        if (!m.has(pos.artikelnummer)) m.set(pos.artikelnummer, []);
-        m.get(pos.artikelnummer)!.push({ id: wt.id, typ: wt.typ });
-      }
-    }
-    return m;
-  }, [wts]);
+  const artikelToWTs = useMemo(() => buildArtToWTList(wts), [wts]);
 
   const bestellungMap = useMemo(() => {
     const m = new Map<string, Set<string>>();
