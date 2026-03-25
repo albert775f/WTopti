@@ -26,7 +26,7 @@ export interface AppState {
   optimizationStatus: 'idle' | 'running' | 'done' | 'error';
   optimizationProgress: { phase: number; phaseName: string; progress: number };
   result: OptimizationResult | null;
-  activeSection: 'upload' | 'abc' | 'cooccurrence' | 'belegungsplan' | 'visualization' | 'ratio' | 'validation';
+  activeSection: 'upload' | 'abc' | 'visualization' | 'ratio' | 'validation';
   validationThresholds: ThresholdConfig;
   apiStatus: ApiStatus | null;
   apiData: ApiData | null;
@@ -51,17 +51,19 @@ export type Action =
   | { type: 'SET_VALIDATION_THRESHOLDS'; thresholds: Partial<ThresholdConfig> };
 
 const DEFAULT_CONFIG: WTConfig = {
-  anzahl_klein: 4145,
-  anzahl_gross: 1111,
   gewicht_hard_kg: 24,
   gewicht_soft_kg: 20,
   hoehe_limit_mm: 320,
   teiler_breite_mm: 5,
-  co_occurrence_schwellwert: 3,
   a_artikel_scatter_n: 3,
   warehouse_area_m2: 1480.65,
   min_segment_mm: 90,
   griff_puffer_mm: 0,
+  affinity_threshold: 0.15,
+  affinity_min_count: 5,
+  affinity_min_orders_a: 10,
+  affinity_max_group_size: 4,
+  singleton_backfill: true,
 };
 
 const initialState: AppState = {
