@@ -1,13 +1,11 @@
-import Graph from 'graphology';
-import louvain from 'graphology-communities-louvain';
-import type { ArtikelProcessed, BestellungData, WTConfig } from '../types';
+import type { ArtikelProcessed, BestellungData, WTConfig, AffinityPair, AffinityGroup, AffinityResult } from '../types';
 
-export interface CoOccurrenceMatrix {
-  [art1: string]: { [art2: string]: number };
-}
+// Backward-compat alias for downstream consumers that import CoOccurrenceMatrix from here
+export type CoOccurrenceMatrix = Record<string, Record<string, number>>;
 
+// Backward-compat stub — phase3 imports this type but no longer uses it at runtime
 export interface ClusterResult {
-  clusters: Map<string, number>; // artikelnummer → cluster_id
+  clusters: Map<string, number>;
   coMatrix: CoOccurrenceMatrix;
   clusterSizes: Map<number, number>;
 }
@@ -16,10 +14,12 @@ export function processPhase2(
   processed: ArtikelProcessed[],
   bestellungen: BestellungData[],
   config: WTConfig,
-): ClusterResult {
+): AffinityResult {
   const activeArticles = new Set(processed.map(p => String(p.artikelnummer)));
 
-  // Group orders by belegnummer
+  // --- Step 1: Co-occurrence matrix ---
+
+  // Group orders by belegnummer, keeping only active articles
   const belegMap = new Map<string, string[]>();
   for (const b of bestellungen) {
     const artNr = String(b.artikelnummer);
@@ -29,169 +29,224 @@ export function processPhase2(
     belegMap.get(beleg)!.push(artNr);
   }
 
-  // Build co-occurrence matrix
   const coMatrix: CoOccurrenceMatrix = {};
+  const orderCount: Record<string, number> = {};
+
   for (const [, artikelList] of belegMap) {
     const unique = [...new Set(artikelList)];
+    for (const artNr of unique) {
+      orderCount[artNr] = (orderCount[artNr] ?? 0) + 1;
+    }
     for (let i = 0; i < unique.length; i++) {
       for (let j = i + 1; j < unique.length; j++) {
         const a = unique[i];
         const b = unique[j];
         if (!coMatrix[a]) coMatrix[a] = {};
         if (!coMatrix[b]) coMatrix[b] = {};
-        coMatrix[a][b] = (coMatrix[a][b] || 0) + 1;
-        coMatrix[b][a] = (coMatrix[b][a] || 0) + 1;
+        coMatrix[a][b] = (coMatrix[a][b] ?? 0) + 1;
+        coMatrix[b][a] = (coMatrix[b][a] ?? 0) + 1;
       }
     }
   }
 
-  // Build graph with edges above threshold
-  const graph = new Graph({ type: 'undirected' });
-  for (const artNr of activeArticles) {
-    graph.addNode(artNr);
+  // --- Step 2: Significant pairs ---
+
+  const threshold = config.affinity_threshold;
+  const minCount = config.affinity_min_count;
+  const minOrdersA = config.affinity_min_orders_a;
+
+  // Lookup for bestand (needed for tie-breaking)
+  const bestandMap = new Map<string, number>();
+  for (const p of processed) {
+    bestandMap.set(String(p.artikelnummer), p.bestand);
   }
 
-  const schwellwert = config.co_occurrence_schwellwert;
-  const addedEdges = new Set<string>();
-  for (const [artA, neighbors] of Object.entries(coMatrix)) {
-    for (const [artB, weight] of Object.entries(neighbors)) {
-      if (weight < schwellwert) continue;
-      const edgeKey = artA < artB ? `${artA}|${artB}` : `${artB}|${artA}`;
-      if (addedEdges.has(edgeKey)) continue;
-      if (!graph.hasNode(artA) || !graph.hasNode(artB)) continue;
-      addedEdges.add(edgeKey);
-      graph.addEdge(artA, artB, { weight });
+  // Map from article -> list of significant AffinityPair where that article is the seed
+  const pairsBySeed = new Map<string, AffinityPair[]>();
+  // Also store a deduplicated list of all significant pairs
+  const allPairs: AffinityPair[] = [];
+  const seenPairKeys = new Set<string>();
+
+  for (const artA of activeArticles) {
+    const neighborsA = coMatrix[artA];
+    if (!neighborsA) continue;
+    const ocA = orderCount[artA] ?? 0;
+    if (ocA < minOrdersA) continue;
+
+    for (const [artB, count] of Object.entries(neighborsA)) {
+      if (!activeArticles.has(artB)) continue;
+      if (count < minCount) continue;
+
+      const pBA = count / ocA; // P(B|A)
+      if (pBA < threshold) continue;
+
+      const ocB = orderCount[artB] ?? 0;
+      const pAB = ocB > 0 ? count / ocB : 0; // P(A|B)
+
+      // Determine seed: higher orderCount wins; tie -> higher bestand
+      let seed: string;
+      let partner: string;
+      let pGivenSeed: number;
+      let pGivenPartner: number;
+
+      if (ocA > ocB) {
+        seed = artA; partner = artB;
+        pGivenSeed = pBA; pGivenPartner = pAB;
+      } else if (ocB > ocA) {
+        seed = artB; partner = artA;
+        pGivenSeed = pAB; pGivenPartner = pBA;
+      } else {
+        // tie on orderCount — use bestand
+        const bA = bestandMap.get(artA) ?? 0;
+        const bB = bestandMap.get(artB) ?? 0;
+        if (bA >= bB) {
+          seed = artA; partner = artB;
+          pGivenSeed = pBA; pGivenPartner = pAB;
+        } else {
+          seed = artB; partner = artA;
+          pGivenSeed = pAB; pGivenPartner = pBA;
+        }
+      }
+
+      const pairKey = seed < partner ? `${seed}|${partner}` : `${partner}|${seed}`;
+      if (!seenPairKeys.has(pairKey)) {
+        seenPairKeys.add(pairKey);
+        const pair: AffinityPair = { seed, partner, pGivenSeed, pGivenPartner, coOccCount: count };
+        allPairs.push(pair);
+        if (!pairsBySeed.has(seed)) pairsBySeed.set(seed, []);
+        pairsBySeed.get(seed)!.push(pair);
+      }
     }
   }
 
-  // Louvain community detection
-  const communities = louvain(graph, {
-    getEdgeWeight: 'weight',
-    resolution: 1,
-  });
+  // --- Step 3: Greedy group formation ---
 
-  // Assign cluster IDs: connected nodes get Louvain community, isolates get unique IDs
-  const clusters = new Map<string, number>();
-  for (const artNr of activeArticles) {
-    const degree = graph.degree(artNr);
-    if (degree === 0) {
-      // Skip isolates for now — assigned unique IDs below
-      continue;
-    } else {
-      clusters.set(artNr, communities[artNr] ?? 0);
+  const remaining = new Set<string>(activeArticles);
+  const groups: AffinityGroup[] = [];
+  let groupIdCounter = 0;
+  const maxGroupSize = config.affinity_max_group_size;
+
+  while (remaining.size > 0) {
+    // Count significant pairs pointing to other remaining articles for each remaining article
+    let bestSeed: string | null = null;
+    let bestPairCount = 0;
+
+    for (const artNr of remaining) {
+      const pairs = pairsBySeed.get(artNr) ?? [];
+      const count = pairs.filter(p => remaining.has(p.partner)).length;
+      if (count > bestPairCount) {
+        bestPairCount = count;
+        bestSeed = artNr;
+      } else if (count === bestPairCount && count > 0 && bestSeed !== null) {
+        // Tie-break: orderCount desc, then bestand desc
+        const ocBest = orderCount[bestSeed] ?? 0;
+        const ocCurr = orderCount[artNr] ?? 0;
+        if (ocCurr > ocBest) {
+          bestSeed = artNr;
+        } else if (ocCurr === ocBest) {
+          const bBest = bestandMap.get(bestSeed) ?? 0;
+          const bCurr = bestandMap.get(artNr) ?? 0;
+          if (bCurr > bBest) bestSeed = artNr;
+        }
+      }
     }
-  }
 
-  // Find max cluster ID from Louvain assignments
-  let maxClusterId = 0;
-  for (const cid of clusters.values()) {
-    if (cid > maxClusterId) maxClusterId = cid;
-  }
-
-  // Each isolated node gets its own unique cluster (prevents mega-cluster)
-  for (const artNr of activeArticles) {
-    if (!clusters.has(artNr)) {
-      maxClusterId++;
-      clusters.set(artNr, maxClusterId);
+    if (bestPairCount === 0 || bestSeed === null) {
+      // No more significant pairs — all remaining become singletons
+      for (const artNr of remaining) {
+        groups.push({ id: groupIdCounter++, members: [artNr], pairs: [], isSingleton: true });
+      }
+      break;
     }
+
+    const seed = bestSeed;
+    remaining.delete(seed);
+
+    const group: string[] = [seed];
+
+    // Candidates: partners of seed with P(partner|seed) >= threshold, still in remaining
+    const seedPairs = pairsBySeed.get(seed) ?? [];
+    const candidates = seedPairs
+      .filter(p => remaining.has(p.partner))
+      .sort((a, b) => b.pGivenSeed - a.pGivenSeed);
+
+    for (const candidatePair of candidates) {
+      if (group.length >= maxGroupSize) break;
+      if (!remaining.has(candidatePair.partner)) continue;
+      group.push(candidatePair.partner);
+      remaining.delete(candidatePair.partner);
+    }
+
+    // Collect all significant pairs where both articles are in this group
+    const groupSet = new Set(group);
+    const groupPairs = allPairs.filter(p => groupSet.has(p.seed) && groupSet.has(p.partner));
+
+    groups.push({ id: groupIdCounter++, members: group, pairs: groupPairs, isSingleton: false });
   }
 
-  // Post-processing: max 2 A-articles per cluster
+  // --- Step 4: A-article constraint (max 2 A-articles per group) ---
+
   const abcMap = new Map<string, 'A' | 'B' | 'C'>();
   for (const p of processed) {
     abcMap.set(String(p.artikelnummer), p.abc_klasse);
   }
 
-  // Group A-articles by cluster (check all clusters, including Louvain community 0)
-  const clusterAArticles = new Map<number, string[]>();
-  for (const [artNr, cid] of clusters) {
-    if (abcMap.get(artNr) === 'A') {
-      if (!clusterAArticles.has(cid)) clusterAArticles.set(cid, []);
-      clusterAArticles.get(cid)!.push(artNr);
-    }
-  }
+  // We iterate over a copy since we may push new singleton groups
+  const groupsSnapshot = [...groups];
+  for (const group of groupsSnapshot) {
+    if (group.isSingleton) continue;
+    const aMembers = group.members.filter(m => abcMap.get(m) === 'A');
+    if (aMembers.length <= 2) continue;
 
-  // Split clusters with > 2 A-articles
-  for (const [, aArticles] of clusterAArticles) {
-    if (aArticles.length <= 2) continue;
-    // Keep first 2, move excess to new sub-clusters
-    const excess = aArticles.slice(2);
-    for (const artNr of excess) {
-      maxClusterId++;
-      clusters.set(artNr, maxClusterId);
-    }
-  }
-
-  // F10: Break up mega-clusters (> MAX_CLUSTER_ARTICLES articles) via greedy co-occurrence BFS
-  const MAX_CLUSTER_ARTICLES = 50;
-  const clusterArticlesMap = new Map<number, string[]>();
-  for (const [artNr, cid] of clusters) {
-    if (!clusterArticlesMap.has(cid)) clusterArticlesMap.set(cid, []);
-    clusterArticlesMap.get(cid)!.push(artNr);
-  }
-
-  for (const [origCid, articles] of clusterArticlesMap) {
-    if (articles.length <= MAX_CLUSTER_ARTICLES) continue;
-
-    // Sort by degree within cluster descending (most connected first)
-    const degreeIn = (artNr: string): number => {
-      const nb = coMatrix[artNr];
-      if (!nb) return 0;
-      let d = 0;
-      for (const other of articles) {
-        if ((nb[other] ?? 0) >= schwellwert) d++;
-      }
-      return d;
+    // Sort excess A-articles by P(member|seed) ascending (weakest first)
+    // seed is members[0]
+    const seedArt = group.members[0];
+    const pGivenSeedForMember = (artNr: string): number => {
+      const pair = allPairs.find(
+        p => (p.seed === seedArt && p.partner === artNr) ||
+             (p.seed === artNr && p.partner === seedArt),
+      );
+      if (!pair) return 0;
+      return pair.seed === seedArt ? pair.pGivenSeed : pair.pGivenPartner;
     };
-    const sorted = [...articles].sort((a, b) => degreeIn(b) - degreeIn(a));
 
-    const remaining = new Set(sorted);
-    const groups: string[][] = [];
+    aMembers.sort((a, b) => pGivenSeedForMember(a) - pGivenSeedForMember(b));
 
-    while (remaining.size > 0) {
-      const seed = sorted.find(a => remaining.has(a))!;
-      const group: string[] = [seed];
-      remaining.delete(seed);
-
-      // BFS: expand via highest-weight edges, up to MAX_CLUSTER_ARTICLES
-      const queue = [seed];
-      while (queue.length > 0 && group.length < MAX_CLUSTER_ARTICLES) {
-        const curr = queue.shift()!;
-        const nb = coMatrix[curr];
-        if (!nb) continue;
-        const candidates = Object.entries(nb)
-          .filter(([nbr, w]) => remaining.has(nbr) && w >= schwellwert)
-          .sort(([, a], [, b]) => b - a);
-        for (const [nbr] of candidates) {
-          if (group.length >= MAX_CLUSTER_ARTICLES) break;
-          if (!remaining.has(nbr)) continue;
-          group.push(nbr);
-          remaining.delete(nbr);
-          queue.push(nbr);
-        }
-      }
-      groups.push(group);
+    const excess = aMembers.slice(2);
+    for (const artNr of excess) {
+      group.members = group.members.filter(m => m !== artNr);
+      // Remove pairs that involved this removed article
+      group.pairs = group.pairs.filter(p => p.seed !== artNr && p.partner !== artNr);
+      // Push as singleton
+      groups.push({ id: groupIdCounter++, members: [artNr], pairs: [], isSingleton: true });
     }
 
-    // Assign new cluster IDs (first group keeps origCid to minimise churn)
-    for (let gi = 0; gi < groups.length; gi++) {
-      const globalCid = gi === 0 ? origCid : ++maxClusterId;
-      for (const artNr of groups[gi]) {
-        clusters.set(artNr, globalCid);
-      }
+    // If group now has only one member it effectively becomes a singleton
+    if (group.members.length === 1) {
+      group.isSingleton = true;
+      group.pairs = [];
     }
   }
 
-  // Assign cluster_id back to processed articles
+  // --- Step 5: Assign cluster_id to processed articles ---
+
+  const articleToGroup = new Map<string, number>();
+  for (const group of groups) {
+    for (const artNr of group.members) {
+      articleToGroup.set(artNr, group.id);
+    }
+  }
+
   for (const p of processed) {
-    p.cluster_id = clusters.get(String(p.artikelnummer)) ?? 0;
+    const artNr = String(p.artikelnummer);
+    p.cluster_id = articleToGroup.get(artNr) ?? 0;
   }
 
-  // Compute cluster sizes
-  const clusterSizes = new Map<number, number>();
-  for (const cid of clusters.values()) {
-    clusterSizes.set(cid, (clusterSizes.get(cid) || 0) + 1);
-  }
-
-  return { clusters, coMatrix, clusterSizes };
+  return {
+    groups,
+    pairs: allPairs,
+    coMatrix,
+    singletonCount: groups.filter(g => g.isSingleton).length,
+    groupCount: groups.filter(g => !g.isSingleton).length,
+  };
 }
