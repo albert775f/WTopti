@@ -1,4 +1,5 @@
 import type { BestellungData, WT, OrderSimulationResult } from '../types';
+import { buildArtToWTList } from '../utils/wtMaps';
 
 function seededRandom(seed: number) {
   let s = seed >>> 0;
@@ -15,21 +16,15 @@ export function runOrderSimulation(
   seed = 42,
   sampleSize = 500,
 ): OrderSimulationResult {
-  const artikelToWTs = new Map<string, string[]>();
-  for (const wt of wts) {
-    for (const pos of wt.positionen) {
-      if (!artikelToWTs.has(pos.artikelnummer)) artikelToWTs.set(pos.artikelnummer, []);
-      artikelToWTs.get(pos.artikelnummer)!.push(wt.id);
-    }
-  }
+  const artikelToWTsRaw = buildArtToWTList(wts);
+  const artikelToWTs = new Map<string, string[]>(
+    Array.from(artikelToWTsRaw.entries()).map(([k, v]) => [k, v.map(e => e.id)])
+  );
 
-  const artikelToBaselineWTs = new Map<string, string[]>();
-  for (const wt of baselineWTs) {
-    for (const pos of wt.positionen) {
-      if (!artikelToBaselineWTs.has(pos.artikelnummer)) artikelToBaselineWTs.set(pos.artikelnummer, []);
-      artikelToBaselineWTs.get(pos.artikelnummer)!.push(wt.id);
-    }
-  }
+  const artikelToBaselineWTsRaw = buildArtToWTList(baselineWTs);
+  const artikelToBaselineWTs = new Map<string, string[]>(
+    Array.from(artikelToBaselineWTsRaw.entries()).map(([k, v]) => [k, v.map(e => e.id)])
+  );
 
   const bestellungMap = new Map<string, Set<string>>();
   for (const b of bestellungen) {

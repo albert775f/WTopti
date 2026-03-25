@@ -1,5 +1,6 @@
 import type { WT, ArtikelProcessed, ExtremesResult, ExtremeEntry } from '../types';
 import type { CoOccurrenceMatrix } from '../algorithm/phase2';
+import { buildArtToFirstWT, getSortedPairs } from '../utils/wtMaps';
 
 function top5<T>(arr: T[], keyFn: (item: T) => number, mapFn: (item: T, rank: number) => ExtremeEntry, descending = true): ExtremeEntry[] {
   const sorted = [...arr].sort((a, b) => descending ? keyFn(b) - keyFn(a) : keyFn(a) - keyFn(b));
@@ -12,12 +13,7 @@ export function calculateExtremes(
   coMatrix: CoOccurrenceMatrix,
 ): ExtremesResult {
   const artMap = new Map(processed.map(a => [String(a.artikelnummer), a]));
-  const artToWT = new Map<string, string>();
-  for (const wt of wts) {
-    for (const pos of wt.positionen) {
-      if (!artToWT.has(pos.artikelnummer)) artToWT.set(pos.artikelnummer, wt.id);
-    }
-  }
+  const artToWT = buildArtToFirstWT(wts);
 
   const largestArticle = top5(processed, a => a.grundflaeche_mm2, (a, rank) => ({
     rank, key: String(a.artikelnummer), label: a.bezeichnung,
@@ -43,14 +39,7 @@ export function calculateExtremes(
     targetWTId: artToWT.get(String(a.artikelnummer)),
   }));
 
-  const pairs: Array<{a: string; b: string; score: number}> = [];
-  for (const [artA, row] of Object.entries(coMatrix)) {
-    for (const [artB, score] of Object.entries(row)) {
-      if (artA < artB) pairs.push({ a: artA, b: artB, score });
-    }
-  }
-  pairs.sort((a, b) => b.score - a.score);
-  const topCoOccPair = pairs.slice(0, 5).map((p, i) => {
+  const topCoOccPair = getSortedPairs(coMatrix, 5).map((p, i) => {
     const labelA = artMap.get(p.a)?.bezeichnung ?? p.a;
     const labelB = artMap.get(p.b)?.bezeichnung ?? p.b;
     return {

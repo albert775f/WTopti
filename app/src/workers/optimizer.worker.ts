@@ -148,7 +148,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     const orderSimulation = runOrderSimulation(phase1Result.filteredBestellungen, wts, baselineWTs);
     const metricsRaw = calculateMetrics(
       wts, baselineWTs, phase1Result.processed, phase1Result.filteredBestellungen,
-      phase2Result.coMatrix, DEFAULT_THRESHOLDS,
+      phase2Result.pairs, phase2Result.coMatrix, DEFAULT_THRESHOLDS,
       orderSimulation.meanPicks, orderSimulation.baselineMeanPicks,
     );
     const extremes = calculateExtremes(wts, phase1Result.processed, phase2Result.coMatrix);

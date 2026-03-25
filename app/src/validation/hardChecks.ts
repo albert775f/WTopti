@@ -14,7 +14,6 @@ export function runHardChecks(
     checkC5_ArtikelReferenz(wts, artikel),
     checkC6_KeineLeereWTs(wts),
     checkC7_FlaechenIntegritaet(wts),
-    checkC8_ConstraintEinhaltung(),
   ];
 }
 
@@ -143,6 +142,3 @@ function checkC7_FlaechenIntegritaet(wts: WT[]): HardCheckResult {
   };
 }
 
-function checkC8_ConstraintEinhaltung(): HardCheckResult {
-  return { id: 'C8', name: 'Constraint-Einhaltung', status: 'PASS', errorCount: 0, details: [] };
-}

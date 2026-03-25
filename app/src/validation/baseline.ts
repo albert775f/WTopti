@@ -32,6 +32,8 @@ export function calculateBaseline(
 
       wtCounter++;
       const id = `BL-${String(wtCounter).padStart(4, '0')}`;
+      const grid_cols = 1;
+      const grid_rows = 1;
 
       wts.push({
         id, typ: 'KLEIN', cluster_id: 0,
@@ -50,11 +52,11 @@ export function calculateBaseline(
         }],
         gesamtgewicht_kg: Math.round(art.gewicht_kg * place * 100) / 100,
         flaeche_brutto_mm2: KLEIN_AREA,
-        flaeche_netto_pct: 100,
+        flaeche_netto_pct: Math.round((1 / (grid_cols * grid_rows)) * 10000) / 100,
         anzahl_teiler: 0,
         gewicht_status: 'ok',
-        grid_cols: 1,
-        grid_rows: 1,
+        grid_cols,
+        grid_rows,
         zone_count: 1,
         zone_w_mm: 500,
         zone_d_mm: 500,

@@ -22,7 +22,11 @@ export function exportValidationCSV(data: ValidationDashboardData, config: WTCon
   rows.push(`Gewicht-Hard-Limit,${config.gewicht_hard_kg} kg`);
   rows.push(`Gewicht-Soft-Limit,${config.gewicht_soft_kg} kg`);
   rows.push(`Höhen-Limit,${config.hoehe_limit_mm} mm`);
-  rows.push(`Co-Occurrence-Schwellwert,${config.co_occurrence_schwellwert}`);
+  rows.push(`Affinity-Threshold,${config.affinity_threshold}`);
+  rows.push(`Affinity-Min-Count,${config.affinity_min_count}`);
+  rows.push(`Affinity-Min-Orders,${config.affinity_min_orders_a}`);
+  rows.push(`Affinity-Max-Group-Size,${config.affinity_max_group_size}`);
+  rows.push(`Singleton-Backfill,${config.singleton_backfill}`);
   rows.push(`Simulations-Seed,42`);
   rows.push(`Simulations-Stichprobe,500`);
 
