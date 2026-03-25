@@ -1,4 +1,4 @@
-import { useAppState, useAppDispatch } from '../context/AppContext';
+import { useAppState } from '../context/AppContext';
 import { KLEIN_FLOOR_M2, GROSS_FLOOR_M2 } from '../algorithm/phase3';
 import { WAREHOUSE_AREA_M2 } from '../algorithm/phase5';
 
@@ -20,7 +20,6 @@ function AreaBar({ usedM2, totalM2, reserveM2 }: { usedM2: number; totalM2: numb
 
 export default function WTRatioSection() {
   const { result } = useAppState();
-  const dispatch = useAppDispatch();
   const r = result?.wt_ratio;
 
   if (!result || !r) {
@@ -31,9 +30,6 @@ export default function WTRatioSection() {
     );
   }
 
-  const deltaKleinSign = r.delta_klein >= 0 ? '+' : '';
-  const deltaGrossSign = r.delta_gross >= 0 ? '+' : '';
-  const configMatchesScaled = r.delta_klein === 0 && r.delta_gross === 0;
 
   return (
     <div className="space-y-5">
@@ -114,20 +110,6 @@ export default function WTRatioSection() {
         </div>
       </div>
 
-      {/* Comparison to current config */}
-      <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-600">
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Vergleich zur aktuellen Konfiguration</p>
-        <div className="flex flex-wrap gap-x-6 gap-y-1">
-          <span>Konfiguriert: {fmt(r.config_klein)} KLEIN / {fmt(r.config_gross)} GROSS</span>
-          <span className={r.delta_klein > 0 ? 'text-amber-600 font-medium' : r.delta_klein < 0 ? 'text-green-700 font-medium' : 'text-gray-400'}>
-            Δ KLEIN: {deltaKleinSign}{fmt(r.delta_klein)}
-          </span>
-          <span className={r.delta_gross > 0 ? 'text-amber-600 font-medium' : r.delta_gross < 0 ? 'text-green-700 font-medium' : 'text-gray-400'}>
-            Δ GROSS: {deltaGrossSign}{fmt(r.delta_gross)}
-          </span>
-        </div>
-      </div>
-
       {/* Overflow warning */}
       {!r.fits_warehouse && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
@@ -163,21 +145,6 @@ export default function WTRatioSection() {
         </div>
       )}
 
-      {/* Apply button */}
-      {r.fits_warehouse && !configMatchesScaled && (
-        <button
-          onClick={() => dispatch({ type: 'SET_CONFIG', payload: { anzahl_klein: r.scaled_klein, anzahl_gross: r.scaled_gross } })}
-          className="w-full py-3 rounded-lg bg-blue-600 text-white font-medium text-sm hover:bg-blue-700 transition-colors"
-        >
-          Als Konfiguration übernehmen
-          &ensp;({fmt(r.scaled_klein)} KLEIN / {fmt(r.scaled_gross)} GROSS)
-        </button>
-      )}
-      {r.fits_warehouse && configMatchesScaled && (
-        <div className="w-full py-3 rounded-lg border border-green-300 bg-green-50 text-green-700 font-medium text-sm text-center">
-          Konfiguration entspricht bereits der Empfehlung
-        </div>
-      )}
     </div>
   );
 }

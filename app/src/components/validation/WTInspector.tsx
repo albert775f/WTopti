@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { WT, WTPosition } from '../../types';
+import type { WT } from '../../types';
 
 const AMPEL_COLORS = { green: '#22c55e', yellow: '#eab308', red: '#ef4444' };
 const ABC_COLORS: Record<string, string> = { A: '#22c55e', B: '#eab308', C: '#9ca3af' };

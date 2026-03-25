@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/a.artykov/OneDrive - Aquatuning GmbH/Dokumente/projects/WTopti/**)",
+      "Bash(docker-compose up:*)",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)"
+    ]
+  }
+}

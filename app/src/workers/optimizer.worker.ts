@@ -85,22 +85,6 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       progress: 85,
     } satisfies WorkerMessage);
 
-    // Build belegungsplan
-    const belegungsplan = wts.flatMap(wt =>
-      wt.positionen.map(pos => ({
-        warentraeger_id: wt.id,
-        warentraeger_typ: wt.typ,
-        artikelnummer: pos.artikelnummer,
-        bezeichnung: pos.bezeichnung,
-        stueckzahl: pos.stueckzahl,
-        cluster_id: wt.cluster_id,
-        abc_klasse: pos.abc_klasse,
-        gesamtgewicht_kg: wt.gesamtgewicht_kg,
-        flaeche_netto_pct: wt.flaeche_netto_pct,
-        anzahl_teiler: wt.anzahl_teiler,
-      })),
-    );
-
     // Merge validations
     const validation = {
       hard_fails: [
@@ -119,13 +103,13 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       exclusion_log: phase1Result.validation.exclusion_log,
     };
 
+    const placedArtikelNummern = new Set(wts.flatMap(wt => wt.positionen.map(pos => pos.artikelnummer)));
     const baseResult: OptimizationResult = {
       wts,
-      belegungsplan,
       validation,
       stats: {
         artikel_gesamt: artikel.length,
-        artikel_platziert: new Set(belegungsplan.map(b => b.artikelnummer)).size,
+        artikel_platziert: placedArtikelNummern.size,
         wts_benoetigt: wts.length,
         wts_klein: wts.filter(w => w.typ === 'KLEIN').length,
         wts_gross: wts.filter(w => w.typ === 'GROSS').length,

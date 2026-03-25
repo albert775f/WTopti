@@ -77,18 +77,6 @@ function ConfigPanel() {
       <h3 className="text-sm font-semibold text-gray-700 mb-3">Konfiguration</h3>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
         <label className="block">
-          <span className="text-gray-600">WT Klein</span>
-          <input type="number" value={config.anzahl_klein}
-            onChange={(e) => update({ anzahl_klein: +e.target.value })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
-        </label>
-        <label className="block">
-          <span className="text-gray-600">WT Groß</span>
-          <input type="number" value={config.anzahl_gross}
-            onChange={(e) => update({ anzahl_gross: +e.target.value })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
-        </label>
-        <label className="block">
           <span className="text-gray-600">Gewicht Hard (kg)</span>
           <input type="number" value={config.gewicht_hard_kg}
             onChange={(e) => update({ gewicht_hard_kg: +e.target.value })}
@@ -104,12 +92,6 @@ function ConfigPanel() {
           <span className="text-gray-600">Höhenlimit (mm)</span>
           <input type="number" value={config.hoehe_limit_mm}
             onChange={(e) => update({ hoehe_limit_mm: +e.target.value })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
-        </label>
-        <label className="block">
-          <span className="text-gray-600">Co-Occurrence Schwellwert</span>
-          <input type="number" value={config.co_occurrence_schwellwert}
-            onChange={(e) => update({ co_occurrence_schwellwert: +e.target.value })}
             className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
         </label>
         <label className="block">
@@ -142,6 +124,63 @@ function ConfigPanel() {
         </label>
         <div className="block">
           <span className="text-gray-500 text-xs">Teilerbreite: <strong>5 mm</strong> (fest)</span>
+        </div>
+        {/* Affinity-Packing Parameters */}
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Affinity-Schwellwert P(B|A)
+          </label>
+          <input
+            type="number" step="0.01" min="0.05" max="0.50"
+            value={config.affinity_threshold}
+            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_threshold: parseFloat(e.target.value) || 0.15 } })}
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Min. Co-Occurrence Anzahl
+          </label>
+          <input
+            type="number" min="1" max="50"
+            value={config.affinity_min_count}
+            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_min_count: parseInt(e.target.value) || 5 } })}
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Min. Bestellungen Seed-Artikel
+          </label>
+          <input
+            type="number" min="1" max="100"
+            value={config.affinity_min_orders_a}
+            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_min_orders_a: parseInt(e.target.value) || 10 } })}
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Max. Artikeltypen pro Template
+          </label>
+          <input
+            type="number" min="2" max="6"
+            value={config.affinity_max_group_size}
+            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_max_group_size: parseInt(e.target.value) || 4 } })}
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="singleton_backfill"
+            checked={config.singleton_backfill}
+            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { singleton_backfill: e.target.checked } })}
+            className="w-4 h-4"
+          />
+          <label htmlFor="singleton_backfill" className="text-xs font-medium text-gray-700">
+            Singletons in Gruppen-WTs einpacken
+          </label>
         </div>
       </div>
     </div>

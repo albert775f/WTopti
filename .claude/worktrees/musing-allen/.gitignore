@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.DS_Store
+*.local
+.vite/
+
+# Excel-Quelldaten (lokal halten, nicht ins Repo)
+*.xlsx
+*.xls
+~$*.xlsx
+~$*.xls

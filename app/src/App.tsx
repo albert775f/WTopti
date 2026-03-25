@@ -4,8 +4,6 @@ import { useOptimizer } from './hooks/useOptimizer';
 import { processPhase1 } from './algorithm/phase1';
 import UploadSection from './components/UploadSection';
 import ABCSection from './components/ABCSection';
-import CoOccurrenceSection from './components/CoOccurrenceSection';
-import BelegungsplanSection from './components/BelegungsplanSection';
 import WTVisualization from './components/WTVisualization';
 import WTRatioSection from './components/WTRatioSection';
 import ValidationDashboard from './components/validation/ValidationDashboard';
@@ -14,8 +12,6 @@ import type { AppState } from './context/AppContext';
 const NAV_ITEMS: { id: AppState['activeSection']; label: string; icon: string }[] = [
   { id: 'upload', label: 'Daten & Config', icon: '📤' },
   { id: 'abc', label: 'ABC-Analyse', icon: '📊' },
-  { id: 'cooccurrence', label: 'Co-Occurrence', icon: '🔗' },
-  { id: 'belegungsplan', label: 'Belegungsplan', icon: '📋' },
   { id: 'visualization', label: 'WT-Visualisierung', icon: '🗺️' },
   { id: 'ratio', label: 'WT-Simulator', icon: '⚖️' },
   { id: 'validation', label: 'Ergebnisvalidierung', icon: '✓' },
@@ -107,10 +103,6 @@ export default function App() {
         return <UploadSection onStartOptimization={handleStartOptimization} />;
       case 'abc':
         return <ABCSection />;
-      case 'cooccurrence':
-        return <CoOccurrenceSection />;
-      case 'belegungsplan':
-        return <BelegungsplanSection />;
       case 'visualization':
         return <WTVisualization />;
       case 'ratio':
@@ -129,9 +121,12 @@ export default function App() {
             onExportBelegungsplan={() => {
               if (!state.result) return;
               const headers = ['WT-ID', 'Typ', 'Artikel', 'Bezeichnung', 'Stück', 'Gewicht (kg)', 'Fläche %', 'Cluster', 'ABC', 'Teiler'];
-              const rows = state.result.belegungsplan.map(r =>
-                [r.warentraeger_id, r.warentraeger_typ, r.artikelnummer, r.bezeichnung,
-                 r.stueckzahl, r.gesamtgewicht_kg, r.flaeche_netto_pct, r.cluster_id, r.abc_klasse, r.anzahl_teiler]
+              const rows = state.result.wts.flatMap(wt =>
+                wt.positionen.map(pos => [
+                  wt.id, wt.typ, pos.artikelnummer, pos.bezeichnung,
+                  pos.stueckzahl, wt.gesamtgewicht_kg, wt.flaeche_netto_pct,
+                  wt.cluster_id, pos.abc_klasse, wt.anzahl_teiler
+                ])
               );
               const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
               const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
