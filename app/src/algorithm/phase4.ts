@@ -9,20 +9,6 @@ export function processPhase4(wts: WT[], config: WTConfig): ValidationResult {
     artikel_ohne_match: [],
   };
 
-  // Hard fail: WT counts exceed configured budget — F6
-  const kleinCount = wts.filter(w => w.typ === 'KLEIN').length;
-  const grossCount = wts.filter(w => w.typ === 'GROSS').length;
-  if (kleinCount > config.anzahl_klein) {
-    validation.hard_fails.push(
-      `KLEIN-WTs benötigt (${kleinCount}) > Kontingent (${config.anzahl_klein})`,
-    );
-  }
-  if (grossCount > config.anzahl_gross) {
-    validation.hard_fails.push(
-      `GROSS-WTs benötigt (${grossCount}) > Kontingent (${config.anzahl_gross})`,
-    );
-  }
-
   for (const wt of wts) {
     // Hard fail: weight > 24kg
     if (wt.gesamtgewicht_kg > config.gewicht_hard_kg) {
