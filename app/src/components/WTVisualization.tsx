@@ -211,6 +211,24 @@ export default function WTVisualization() {
             className="border border-gray-300 rounded px-2 py-1 text-sm w-40" />
           <button onClick={handleSearch}
             className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Suche</button>
+          <button
+            onClick={() => {
+              const headers = ['WT-ID', 'Typ', 'Artikel', 'Bezeichnung', 'Stück', 'Gewicht (kg)', 'Fläche %', 'Cluster', 'ABC', 'Teiler'];
+              const rows = wts.flatMap(w =>
+                w.positionen.map(pos => [
+                  w.id, w.typ, pos.artikelnummer, pos.bezeichnung,
+                  pos.stueckzahl, w.gesamtgewicht_kg, w.flaeche_netto_pct,
+                  w.cluster_id, pos.abc_klasse, w.anzahl_teiler,
+                ])
+              );
+              const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
+              const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = 'belegungsplan.csv'; a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700">CSV Export</button>
         </div>
       </div>
 
