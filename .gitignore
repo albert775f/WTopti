@@ -5,6 +5,8 @@ dist/
 *.local
 .vite/
 
+FIXES.md
+
 # Excel-Quelldaten (lokal halten, nicht ins Repo)
 *.xlsx
 *.xls
