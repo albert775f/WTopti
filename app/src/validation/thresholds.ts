@@ -6,7 +6,7 @@ export const DEFAULT_THRESHOLDS: ThresholdConfig = {
   M4: { green: 0.05, yellow: 0.15 },
   M5: { green: 0.10, yellow: 0.25 },
   M6: { green: 0.10, yellow: 0.20 },
-  M7: { green: 0.60, yellow: 0.30 },
+  M7: { green: 0.90, yellow: 0.70 },
   M8: { green: 0.30, yellow: 0.60 },
   M9: { green: 3.0, yellow: 5.0 },
 };

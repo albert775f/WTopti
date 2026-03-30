@@ -9,6 +9,52 @@ function seededRandom(seed: number) {
   };
 }
 
+/**
+ * Greedy Set Cover: find the minimum set of WTs that covers all needed articles.
+ * For each step, pick the WT that covers the most still-needed articles.
+ * This is a heuristic (Set Cover is NP-hard) but quasi-optimal for small order sizes.
+ */
+function greedySetCover(
+  neededArticles: Set<string>,
+  artToWTIds: Map<string, Set<string>>,
+  wtIdToArticles: Map<string, Set<string>>,
+): number {
+  const needed = new Set(neededArticles);
+  let pickCount = 0;
+
+  while (needed.size > 0) {
+    let bestWTId: string | null = null;
+    let bestCoverage = 0;
+
+    for (const artNr of needed) {
+      const wtIds = artToWTIds.get(artNr);
+      if (!wtIds) continue;
+      for (const wtId of wtIds) {
+        const articles = wtIdToArticles.get(wtId);
+        if (!articles) continue;
+        let coverage = 0;
+        for (const a of needed) {
+          if (articles.has(a)) coverage++;
+        }
+        if (coverage > bestCoverage) {
+          bestCoverage = coverage;
+          bestWTId = wtId;
+        }
+      }
+    }
+
+    if (!bestWTId) break; // remaining articles not found in any WT
+
+    pickCount++;
+    const covered = wtIdToArticles.get(bestWTId)!;
+    for (const a of [...needed]) {
+      if (covered.has(a)) needed.delete(a);
+    }
+  }
+
+  return pickCount;
+}
+
 export function runOrderSimulation(
   bestellungen: BestellungData[],
   wts: WT[],
@@ -16,11 +62,18 @@ export function runOrderSimulation(
   seed = 42,
   sampleSize = 500,
 ): OrderSimulationResult {
-  const artikelToWTsRaw = buildArtToWTList(wts);
-  const artikelToWTs = new Map<string, string[]>(
-    Array.from(artikelToWTsRaw.entries()).map(([k, v]) => [k, v.map(e => e.id)])
-  );
+  // Build indexes for optimized WTs (Greedy Set Cover)
+  const artToWTIdsRaw = new Map<string, Set<string>>();
+  const wtIdToArticles = new Map<string, Set<string>>();
+  for (const wt of wts) {
+    wtIdToArticles.set(wt.id, new Set(wt.positionen.map(p => p.artikelnummer)));
+    for (const pos of wt.positionen) {
+      if (!artToWTIdsRaw.has(pos.artikelnummer)) artToWTIdsRaw.set(pos.artikelnummer, new Set());
+      artToWTIdsRaw.get(pos.artikelnummer)!.add(wt.id);
+    }
+  }
 
+  // Build indexes for baseline WTs (first-WT heuristic, same as before)
   const artikelToBaselineWTsRaw = buildArtToWTList(baselineWTs);
   const artikelToBaselineWTs = new Map<string, string[]>(
     Array.from(artikelToBaselineWTsRaw.entries()).map(([k, v]) => [k, v.map(e => e.id)])
@@ -42,15 +95,17 @@ export function runOrderSimulation(
 
   for (const belegnr of sample) {
     const artikel = bestellungMap.get(belegnr) ?? new Set();
-    const wtSet = new Set<string>();
+
+    // Optimized: Greedy Set Cover
+    const needed = new Set([...artikel].filter(a => artToWTIdsRaw.has(a)));
+    pickCounts.push(greedySetCover(needed, artToWTIdsRaw, wtIdToArticles));
+
+    // Baseline: first-WT heuristic
     const baselineSet = new Set<string>();
     for (const artNr of artikel) {
-      const ids = artikelToWTs.get(artNr);
-      if (ids?.[0]) wtSet.add(ids[0]);
       const bIds = artikelToBaselineWTs.get(artNr);
       if (bIds?.[0]) baselineSet.add(bIds[0]);
     }
-    pickCounts.push(wtSet.size);
     baselinePickCounts.push(baselineSet.size);
   }
 

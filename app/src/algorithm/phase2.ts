@@ -124,7 +124,7 @@ export function processPhase2(
   const remaining = new Set<string>(activeArticles);
   const groups: AffinityGroup[] = [];
   let groupIdCounter = 0;
-  const maxGroupSize = config.affinity_max_group_size;
+  const maxGroupSize = 6; // physical maximum — not configurable
 
   while (remaining.size > 0) {
     // Count significant pairs pointing to other remaining articles for each remaining article
@@ -184,48 +184,23 @@ export function processPhase2(
     groups.push({ id: groupIdCounter++, members: group, pairs: groupPairs, isSingleton: false });
   }
 
-  // --- Step 4: A-article constraint (max 2 A-articles per group) ---
+  // --- Step 4: Build partnerIndex ---
+  // For each article: all partners sorted by max(P(B|A), P(A|B)) descending.
 
-  const abcMap = new Map<string, 'A' | 'B' | 'C'>();
-  for (const p of processed) {
-    abcMap.set(String(p.artikelnummer), p.abc_klasse);
+  const partnerIndex = new Map<string, Array<{ partner: string; affinity: number }>>();
+
+  for (const pair of allPairs) {
+    const affinity = Math.max(pair.pGivenSeed, pair.pGivenPartner);
+
+    if (!partnerIndex.has(pair.seed)) partnerIndex.set(pair.seed, []);
+    partnerIndex.get(pair.seed)!.push({ partner: pair.partner, affinity });
+
+    if (!partnerIndex.has(pair.partner)) partnerIndex.set(pair.partner, []);
+    partnerIndex.get(pair.partner)!.push({ partner: pair.seed, affinity });
   }
 
-  // We iterate over a copy since we may push new singleton groups
-  const groupsSnapshot = [...groups];
-  for (const group of groupsSnapshot) {
-    if (group.isSingleton) continue;
-    const aMembers = group.members.filter(m => abcMap.get(m) === 'A');
-    if (aMembers.length <= 2) continue;
-
-    // Sort excess A-articles by P(member|seed) ascending (weakest first)
-    // seed is members[0]
-    const seedArt = group.members[0];
-    const pGivenSeedForMember = (artNr: string): number => {
-      const pair = allPairs.find(
-        p => (p.seed === seedArt && p.partner === artNr) ||
-             (p.seed === artNr && p.partner === seedArt),
-      );
-      if (!pair) return 0;
-      return pair.seed === seedArt ? pair.pGivenSeed : pair.pGivenPartner;
-    };
-
-    aMembers.sort((a, b) => pGivenSeedForMember(a) - pGivenSeedForMember(b));
-
-    const excess = aMembers.slice(2);
-    for (const artNr of excess) {
-      group.members = group.members.filter(m => m !== artNr);
-      // Remove pairs that involved this removed article
-      group.pairs = group.pairs.filter(p => p.seed !== artNr && p.partner !== artNr);
-      // Push as singleton
-      groups.push({ id: groupIdCounter++, members: [artNr], pairs: [], isSingleton: true });
-    }
-
-    // If group now has only one member it effectively becomes a singleton
-    if (group.members.length === 1) {
-      group.isSingleton = true;
-      group.pairs = [];
-    }
+  for (const list of partnerIndex.values()) {
+    list.sort((a, b) => b.affinity - a.affinity);
   }
 
   // --- Step 5: Assign cluster_id to processed articles ---
@@ -245,6 +220,7 @@ export function processPhase2(
   return {
     groups,
     pairs: allPairs,
+    partnerIndex,
     coMatrix,
     singletonCount: groups.filter(g => g.isSingleton).length,
     groupCount: groups.filter(g => !g.isSingleton).length,

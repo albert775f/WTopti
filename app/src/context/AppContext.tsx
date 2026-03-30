@@ -55,15 +55,12 @@ const DEFAULT_CONFIG: WTConfig = {
   gewicht_soft_kg: 20,
   hoehe_limit_mm: 320,
   teiler_breite_mm: 5,
-  a_artikel_scatter_n: 3,
   warehouse_area_m2: 1480.65,
   min_segment_mm: 90,
   griff_puffer_mm: 0,
   affinity_threshold: 0.15,
   affinity_min_count: 5,
   affinity_min_orders_a: 10,
-  affinity_max_group_size: 4,
-  singleton_backfill: true,
 };
 
 const initialState: AppState = {

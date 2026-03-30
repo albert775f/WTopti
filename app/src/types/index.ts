@@ -58,16 +58,13 @@ export interface WTConfig {
   teiler_modus?: 'exact' | 'percent'; // legacy, removed from UI
   /** @deprecated No longer used by Phase 2. Retained for backwards compatibility. */
   co_occurrence_schwellwert?: number;
-  a_artikel_scatter_n: number;    // default: 3 — split A-articles across n WTs
   warehouse_area_m2: number;      // default: 1480.65 — total STOROJET rack floor area
   min_segment_mm: number;         // default: 90 — minimum zone width AND depth (hand reachability)
   griff_puffer_mm: number;        // default: 0 — required free space on at least one zone side for gripping
-  // New affinity-based packing parameters
+  // Affinity-based packing parameters (algorithm-internal, hidden from main UI)
   affinity_threshold: number;      // Min P(B|A) to include a pair. Default: 0.15
   affinity_min_count: number;      // Min co-occurrence count. Default: 5
   affinity_min_orders_a: number;   // Min order count for seed article. Default: 10
-  affinity_max_group_size: number; // Hard cap on article types per template. Default: 4
-  singleton_backfill: boolean;     // Pack singletons into spare group WT capacity. Default: true
 }
 
 // ============ WT + OUTPUT TYPES ============
@@ -128,6 +125,8 @@ export interface AffinityGroup {
 export interface AffinityResult {
   groups: AffinityGroup[];
   pairs: AffinityPair[];                              // All significant pairs (for dashboard)
+  /** For each article: all partners sorted by affinity descending. Affinity = max(P(B|A), P(A|B)). */
+  partnerIndex: Map<string, Array<{ partner: string; affinity: number }>>;
   coMatrix: Record<string, Record<string, number>>;   // Raw counts — same structure as before
   singletonCount: number;
   groupCount: number;

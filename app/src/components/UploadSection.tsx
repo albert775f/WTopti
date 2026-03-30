@@ -95,13 +95,6 @@ function ConfigPanel() {
             className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
         </label>
         <label className="block">
-          <span className="text-gray-600">A-Artikel Scatter (Kopien)</span>
-          <input type="number" value={config.a_artikel_scatter_n} min={1} max={10}
-            onChange={(e) => update({ a_artikel_scatter_n: Math.max(1, Math.min(10, +e.target.value)) })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
-          <span className="text-xs text-gray-400">Anzahl WTs auf die A-Artikel verteilt werden</span>
-        </label>
-        <label className="block">
           <span className="text-sm text-gray-600">Lagerfläche (m²)</span>
           <input type="number" step="0.01" value={config.warehouse_area_m2 ?? 1480.65}
             onChange={(e) => update({ warehouse_area_m2: +e.target.value })}
@@ -158,29 +151,6 @@ function ConfigPanel() {
             onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_min_orders_a: parseInt(e.target.value) || 10 } })}
             className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
           />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            Max. Artikeltypen pro Template
-          </label>
-          <input
-            type="number" min="2" max="6"
-            value={config.affinity_max_group_size}
-            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_max_group_size: parseInt(e.target.value) || 4 } })}
-            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="singleton_backfill"
-            checked={config.singleton_backfill}
-            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { singleton_backfill: e.target.checked } })}
-            className="w-4 h-4"
-          />
-          <label htmlFor="singleton_backfill" className="text-xs font-medium text-gray-700">
-            Singletons in Gruppen-WTs einpacken
-          </label>
         </div>
       </div>
     </div>

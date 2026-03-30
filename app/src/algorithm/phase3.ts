@@ -190,29 +190,7 @@ export function planWTTypes(
   return { plan, preferences };
 }
 
-// ============================================================
-// A-article scatter
-// ============================================================
-
-function scatterAArtikel(processed: ArtikelProcessed[], config: WTConfig): ArtikelProcessed[] {
-  const n = config.a_artikel_scatter_n;
-  if (n <= 1) return processed;
-  const result: ArtikelProcessed[] = [];
-  for (const art of processed) {
-    if (art.abc_klasse === 'A' && art.bestand > n) {
-      const chunkSize = Math.ceil(art.bestand / n);
-      let remaining = art.bestand;
-      for (let i = 0; i < n && remaining > 0; i++) {
-        const chunk = Math.min(chunkSize, remaining);
-        result.push({ ...art, bestand: chunk, platzbedarf_mm2: chunk * art.grundflaeche_mm2 });
-        remaining -= chunk;
-      }
-    } else {
-      result.push(art);
-    }
-  }
-  return result;
-}
+// scatterAArtikel removed in v4.0 — distribution emerges from partner-WT placement
 
 // ============================================================
 // Uniform grid model helpers
@@ -427,7 +405,34 @@ function tryMovePositionToWT(srcWT: WT, pos: WTPosition, tgtWT: WT, config: WTCo
 }
 
 // ============================================================
-// Main Phase 3 entry point
+// v4.0: canAddArticle — dry-run check (no WT mutation)
+// ============================================================
+
+const MAX_ARTICLES_PER_WT = 6;
+
+function canAddArticle(wt: WT, artNr: string, art: ArtikelProcessed, config: WTConfig): boolean {
+  if (wt.positionen.some(p => p.artikelnummer === artNr)) return false;
+  if (wt.positionen.length >= MAX_ARTICLES_PER_WT) return false;
+
+  const wtD = getWTDepth(wt.typ);
+  const newZoneCount = wt.positionen.length + 1;
+  const grid = bestGrid(newZoneCount, WT_WIDTH, wtD, config.teiler_breite_mm, config.min_segment_mm);
+  if (!grid) return false;
+
+  for (const pos of wt.positionen) {
+    if (itemsPerZone(pos.hoehe_mm, pos.breite_mm, pos.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm) < pos.stueckzahl) return false;
+  }
+
+  const cap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm);
+  if (cap <= 0) return false;
+
+  if (wt.gesamtgewicht_kg + art.gewicht_kg > config.gewicht_hard_kg) return false;
+
+  return true;
+}
+
+// ============================================================
+// Main Phase 3 entry point (v4.0: Pass 1 + Pass 2)
 // ============================================================
 
 export function processPhase3(
@@ -436,311 +441,226 @@ export function processPhase3(
   config: WTConfig,
 ): WT[] {
   const { plan: wtTypePlan } = planWTTypes(processed, config);
-  const scattered = scatterAArtikel(processed, config);
 
-  // Build lookup: last scatter entry wins for article metadata (same dims, diff bestand)
   const artDataMap = new Map<string, ArtikelProcessed>();
-  for (const art of scattered) {
+  for (const art of processed) {
     artDataMap.set(String(art.artikelnummer), art);
   }
 
-  // Track remaining bestand per artikelnummer (sum all scatter entries)
-  const remainingBestand = new Map<string, number>();
-  for (const art of scattered) {
-    const k = String(art.artikelnummer);
-    remainingBestand.set(k, (remainingBestand.get(k) ?? 0) + art.bestand);
-  }
-
-  const allWTs: WT[] = [];   // group-stream WTs
   let kleinCounter = 0;
   let grossCounter = 0;
-
   function nextId(typ: WTTyp): string {
     return typ === 'KLEIN'
       ? `K-${String(++kleinCounter).padStart(4, '0')}`
       : `G-${String(++grossCounter).padStart(4, '0')}`;
   }
 
-  // ── Group stream ──────────────────────────────────────────────────────────
-  const singletonArts = new Set<string>(); // articles routed to singleton stream
+  const allWTs: WT[] = [];
+  // Dynamic index: artNr → WTs currently containing that article
+  const artToWTs = new Map<string, Set<WT>>();
+  // Mono-WTs created in Pass 1 per article
+  const monoIndex = new Map<string, WT[]>();
 
-  for (const group of affinityResult.groups) {
-    if (group.isSingleton) {
-      singletonArts.add(group.members[0]);
-      continue;
-    }
-
-    // Filter members to those with remaining bestand
-    let groupMembers = group.members.filter(m => (remainingBestand.get(m) ?? 0) > 0);
-    if (groupMembers.length === 0) continue;
-
-    // Find template — try reducing group if needed
-    type Template = {
-      wtTyp: WTTyp;
-      grid: { cols: number; rows: number; zoneW: number; zoneD: number };
-      cap: Map<string, number>;
-    };
-
-    let template: Template | null = null;
-
-    while (groupMembers.length > 0 && template === null) {
-      // Determine starting WT type: prefer GROSS if any member is must_gross
-      const hasMustGross = groupMembers.some(m => wtTypePlan.get(m) === 'GROSS');
-      const typesToTry: WTTyp[] = hasMustGross ? ['GROSS', 'KLEIN'] : ['KLEIN', 'GROSS'];
-
-      for (const wtTyp of typesToTry) {
-        const wtD = getWTDepth(wtTyp);
-        const grid = bestGrid(groupMembers.length, WT_WIDTH, wtD, config.teiler_breite_mm, config.min_segment_mm);
-        if (!grid) continue;
-
-        const cap = new Map<string, number>();
-        let gridValid = true;
-        for (const m of groupMembers) {
-          const art = artDataMap.get(m);
-          if (!art) { gridValid = false; break; }
-          const c = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm);
-          if (c === 0) { gridValid = false; break; }
-          cap.set(m, c);
-        }
-        if (!gridValid) continue;
-
-        // Weight feasibility: at least 1 unit of every member must fit
-        const minWeight = groupMembers.reduce((s, m) => s + (artDataMap.get(m)?.gewicht_kg ?? 0), 0);
-        if (minWeight > config.gewicht_hard_kg) continue;
-
-        template = { wtTyp, grid, cap };
-        break;
-      }
-
-      if (template === null) {
-        // Remove weakest partner (lowest P(partner|seed)) and retry
-        if (groupMembers.length <= 1) {
-          singletonArts.add(groupMembers[0]);
-          groupMembers = [];
-        } else {
-          const seed = groupMembers[0];
-          const getPScore = (m: string): number => {
-            const pair = group.pairs.find(
-              p => (p.seed === seed && p.partner === m) || (p.partner === seed && p.seed === m),
-            );
-            if (!pair) return 0;
-            return pair.seed === seed ? pair.pGivenSeed : pair.pGivenPartner;
-          };
-          const nonSeed = groupMembers.slice(1);
-          nonSeed.sort((a, b) => getPScore(a) - getPScore(b));
-          const weakest = nonSeed[0];
-          singletonArts.add(weakest);
-          groupMembers = groupMembers.filter(m => m !== weakest);
-        }
-      }
-    }
-
-    if (!template || groupMembers.length === 0) continue;
-
-    // Template packing loop
-    const rem = new Map<string, number>();
-    for (const m of groupMembers) {
-      rem.set(m, remainingBestand.get(m) ?? 0);
-    }
-
-    const hasAny = () => [...rem.values()].some(v => v > 0);
-
-    while (hasAny()) {
-      const wt = createWT(nextId(template.wtTyp), template.wtTyp, group.id);
-      setWTGrid(wt, template.grid.cols, template.grid.rows, template.grid.zoneW, template.grid.zoneD);
-
-      for (const m of groupMembers) {
-        const art = artDataMap.get(m);
-        if (!art) continue;
-        const cap = template.cap.get(m) ?? 0;
-        let toPlace = Math.min(rem.get(m) ?? 0, cap);
-
-        while (toPlace > 0 && wt.gesamtgewicht_kg + toPlace * art.gewicht_kg > config.gewicht_hard_kg) {
-          toPlace--;
-        }
-
-        if (toPlace <= 0) continue;
-
-        wt.positionen.push({
-          artikelnummer: m,
-          bezeichnung: art.bezeichnung,
-          stueckzahl: toPlace,
-          grundflaeche_mm2: art.grundflaeche_mm2,
-          gewicht_kg: art.gewicht_kg,
-          abc_klasse: art.abc_klasse,
-          hoehe_mm: art.hoehe_mm,
-          breite_mm: art.breite_mm,
-          laenge_mm: art.laenge_mm,
-          max_stapelhoehe: art.max_stapelhoehe,
-          zone_index: wt.positionen.length,
-        });
-        rem.set(m, (rem.get(m) ?? 0) - toPlace);
-        updateWTMetrics(wt, config);
-      }
-
-      if (wt.positionen.length > 0) {
-        allWTs.push(wt);
-      } else {
-        break; // safety exit — nothing could be placed
-      }
-    }
-
-    // Update global remaining bestand after group packing
-    for (const m of groupMembers) {
-      remainingBestand.set(m, rem.get(m) ?? 0);
-    }
+  function registerArtToWT(artNr: string, wt: WT) {
+    if (!artToWTs.has(artNr)) artToWTs.set(artNr, new Set());
+    artToWTs.get(artNr)!.add(wt);
   }
 
-  // ── Singleton stream ───────────────────────────────────────────────────────
-  const singletonWTs: WT[] = [];
+  // ── Pass 1: Create mono WTs ──────────────────────────────────────────────
+  for (const art of processed) {
+    if (art.bestand <= 0) continue;
+    const artNr = String(art.artikelnummer);
 
-  // Pre-compute KLEIN-oriented footprint for FFD sort key
-  const orientedFootprint = new Map<string, number>();
-  for (const [artNr, art] of artDataMap) {
-    const orient = bestArticleOrientation(
-      art.hoehe_mm, art.breite_mm, art.laenge_mm,
-      art.gewicht_kg, WT_WIDTH, WT_DEPTH_KLEIN,
-      config.gewicht_hard_kg, config.min_segment_mm,
-    ) ?? bestArticleOrientation(
-      art.hoehe_mm, art.breite_mm, art.laenge_mm,
-      art.gewicht_kg, WT_WIDTH, WT_DEPTH_GROSS,
-      config.gewicht_hard_kg, config.min_segment_mm,
-    );
-    orientedFootprint.set(artNr, orient?.grundflaeche_mm2 ?? art.grundflaeche_mm2);
-  }
+    const preferredTyp = wtTypePlan.get(artNr) ?? 'KLEIN';
+    const typesToTry: WTTyp[] = preferredTyp === 'KLEIN' ? ['KLEIN', 'GROSS'] : ['GROSS', 'KLEIN'];
 
-  const singletonArticles = [...singletonArts]
-    .map(artNr => ({
-      artNr,
-      art: artDataMap.get(artNr),
-      rem: remainingBestand.get(artNr) ?? 0,
-    }))
-    .filter(x => x.art && x.rem > 0 && x.art.grundflaeche_mm2 > 0)
-    .sort((a, b) =>
-      (orientedFootprint.get(b.artNr) ?? b.art!.grundflaeche_mm2) -
-      (orientedFootprint.get(a.artNr) ?? a.art!.grundflaeche_mm2),
-    );
+    let grid: { cols: number; rows: number; zoneW: number; zoneD: number } | null = null;
+    let cap = 0;
+    let wtTyp: WTTyp = preferredTyp;
 
-  for (const { artNr, art } of singletonArticles) {
-    if (!art) continue;
-    const groupId = affinityResult.groups.find(g => g.members.includes(artNr))?.id ?? 0;
-    let remaining = remainingBestand.get(artNr) ?? 0;
+    for (const tryTyp of typesToTry) {
+      const tryWtD = getWTDepth(tryTyp);
+      const tryGrid = bestGrid(1, WT_WIDTH, tryWtD, config.teiler_breite_mm, config.min_segment_mm);
+      if (!tryGrid) continue;
+      const tryCap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, tryGrid.zoneW, tryGrid.zoneD, config.griff_puffer_mm);
+      if (tryCap <= 0) continue;
+      grid = tryGrid;
+      cap = tryCap;
+      wtTyp = tryTyp;
+      break;
+    }
+
+    if (!grid || cap <= 0) continue;
+
+    let remaining = art.bestand;
+    const monoWTs: WT[] = [];
 
     while (remaining > 0) {
-      let placed = 0;
-
-      // Try existing singleton WTs
-      for (const wt of singletonWTs) {
-        const wtD = getWTDepth(wt.typ);
-        const p = tryAddArticleToWT(wt, artNr, art, remaining, wtD, config);
-        if (p > 0) { remaining -= p; placed = p; break; }
-      }
-
-      if (placed > 0) continue;
-
-      // Create new WT
-      const newTyp: WTTyp = wtTypePlan.get(artNr) ?? 'KLEIN';
-      const typesToTry: WTTyp[] = [newTyp, newTyp === 'KLEIN' ? 'GROSS' : 'KLEIN'];
-      let created = false;
-
-      for (const tryTyp of typesToTry) {
-        const tryWtD = getWTDepth(tryTyp);
-        const grid = bestGrid(1, WT_WIDTH, tryWtD, config.teiler_breite_mm, config.min_segment_mm);
-        if (!grid) continue;
-        const cap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm);
-        if (cap <= 0) continue;
-        let toPlace = Math.min(remaining, cap);
+      let toPlace = Math.min(remaining, cap);
+      if (art.gewicht_kg > 0) {
         while (toPlace > 0 && toPlace * art.gewicht_kg > config.gewicht_hard_kg) toPlace--;
-        if (toPlace <= 0) continue;
-
-        const id = nextId(tryTyp);
-        const newWT = createWT(id, tryTyp, groupId);
-        newWT.positionen.push({
-          artikelnummer: artNr,
-          bezeichnung: art.bezeichnung,
-          stueckzahl: toPlace,
-          grundflaeche_mm2: art.grundflaeche_mm2,
-          gewicht_kg: art.gewicht_kg,
-          abc_klasse: art.abc_klasse,
-          hoehe_mm: art.hoehe_mm,
-          breite_mm: art.breite_mm,
-          laenge_mm: art.laenge_mm,
-          max_stapelhoehe: art.max_stapelhoehe,
-          zone_index: 0,
-        });
-        setWTGrid(newWT, grid.cols, grid.rows, grid.zoneW, grid.zoneD);
-        updateWTMetrics(newWT, config);
-        singletonWTs.push(newWT);
-        remaining -= toPlace;
-        created = true;
-        break;
       }
+      if (toPlace <= 0) break;
 
-      if (!created) break; // article physically can't be placed
+      const wt = createWT(nextId(wtTyp), wtTyp, art.cluster_id ?? 0);
+      setWTGrid(wt, grid.cols, grid.rows, grid.zoneW, grid.zoneD);
+      wt.positionen.push({
+        artikelnummer: artNr,
+        bezeichnung: art.bezeichnung,
+        stueckzahl: toPlace,
+        grundflaeche_mm2: art.grundflaeche_mm2,
+        gewicht_kg: art.gewicht_kg,
+        abc_klasse: art.abc_klasse,
+        hoehe_mm: art.hoehe_mm,
+        breite_mm: art.breite_mm,
+        laenge_mm: art.laenge_mm,
+        max_stapelhoehe: art.max_stapelhoehe,
+        zone_index: 0,
+      });
+      updateWTMetrics(wt, config);
+      allWTs.push(wt);
+      monoWTs.push(wt);
+      registerArtToWT(artNr, wt);
+      remaining -= toPlace;
+    }
+
+    if (monoWTs.length > 0) {
+      monoIndex.set(artNr, monoWTs);
     }
   }
 
-  // ── Singleton backfill ─────────────────────────────────────────────────────
-  const backfillRemoved = new Set<string>();
+  // ── Pass 2: Redistribute onto partner WTs ───────────────────────────────
+  const { partnerIndex } = affinityResult;
 
-  if (config.singleton_backfill) {
-    for (const singletonWT of singletonWTs) {
-      if (singletonWT.positionen.length !== 1) continue;
-      if (singletonWT.gesamtgewicht_kg >= config.gewicht_soft_kg) continue;
+  // Sort articles by partner count desc, then umsatz desc, then bestand desc
+  const sortedArticles = [...processed]
+    .filter(art => art.bestand > 0)
+    .sort((a, b) => {
+      const aNr = String(a.artikelnummer);
+      const bNr = String(b.artikelnummer);
+      const aP = partnerIndex.get(aNr)?.length ?? 0;
+      const bP = partnerIndex.get(bNr)?.length ?? 0;
+      if (bP !== aP) return bP - aP;
+      if (b.umsatz_gesamt !== a.umsatz_gesamt) return b.umsatz_gesamt - a.umsatz_gesamt;
+      return b.bestand - a.bestand;
+    });
 
-      const pos = singletonWT.positionen[0];
+  const removedWTIds = new Set<string>();
 
-      for (const groupWT of allWTs) {
-        if (groupWT.typ !== singletonWT.typ) continue;
-        if (groupWT.positionen.length >= groupWT.zone_count) continue;
+  for (const art of sortedArticles) {
+    const artNr = String(art.artikelnummer);
+    const partners = partnerIndex.get(artNr);
+    if (!partners || partners.length === 0) continue;
 
-        const wtD = getWTDepth(groupWT.typ);
-        const placed = tryAddArticleToWT(groupWT, pos.artikelnummer, pos, pos.stueckzahl, wtD, config);
-        if (placed > 0) {
-          backfillRemoved.add(singletonWT.id);
-          break;
+    // Collect partner WTs that can accept A (dedup by WT id)
+    const targetWTs: WT[] = [];
+    const targetWTIds = new Set<string>();
+
+    for (const { partner } of partners) {
+      const partnerWTs = artToWTs.get(partner);
+      if (!partnerWTs) continue;
+      for (const wt of partnerWTs) {
+        if (removedWTIds.has(wt.id)) continue;
+        if (targetWTIds.has(wt.id)) continue;
+        if (canAddArticle(wt, artNr, art, config)) {
+          targetWTs.push(wt);
+          targetWTIds.add(wt.id);
         }
       }
     }
+
+    if (targetWTs.length === 0) continue;
+
+    // Total bestand of A currently across all active WTs
+    let totalBestand = 0;
+    const currentWTs = artToWTs.get(artNr);
+    if (currentWTs) {
+      for (const wt of currentWTs) {
+        if (removedWTIds.has(wt.id)) continue;
+        const pos = wt.positionen.find(p => p.artikelnummer === artNr);
+        if (pos) totalBestand += pos.stueckzahl;
+      }
+    }
+
+    if (totalBestand <= 0) continue;
+
+    const mengeProWT = Math.ceil(totalBestand / targetWTs.length);
+
+    // Place A on partner WTs
+    let distributed = 0;
+    for (const wt of targetWTs) {
+      if (distributed >= totalBestand) break;
+      const toPlace = Math.min(mengeProWT, totalBestand - distributed);
+      const wtD = getWTDepth(wt.typ);
+      const placed = tryAddArticleToWT(wt, artNr, art, toPlace, wtD, config);
+      if (placed > 0) {
+        registerArtToWT(artNr, wt);
+        distributed += placed;
+      }
+    }
+
+    // Adjust own mono WTs
+    let remainingBestand = totalBestand - distributed;
+    const monoWTs = (monoIndex.get(artNr) ?? []).filter(wt => !removedWTIds.has(wt.id));
+    // Sort ascending so smallest (most dispensable) mono WTs are removed first
+    monoWTs.sort((a, b) => {
+      const aPos = a.positionen.find(p => p.artikelnummer === artNr);
+      const bPos = b.positionen.find(p => p.artikelnummer === artNr);
+      return (aPos?.stueckzahl ?? 0) - (bPos?.stueckzahl ?? 0);
+    });
+
+    for (const monoWT of monoWTs) {
+      const pos = monoWT.positionen.find(p => p.artikelnummer === artNr);
+      if (!pos) continue;
+
+      if (remainingBestand <= 0) {
+        removedWTIds.add(monoWT.id);
+        artToWTs.get(artNr)?.delete(monoWT);
+      } else {
+        // Cap to single-zone capacity of this mono WT
+        const grid = bestGrid(1, WT_WIDTH, getWTDepth(monoWT.typ), config.teiler_breite_mm, config.min_segment_mm);
+        const originalCap = grid
+          ? itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm)
+          : pos.stueckzahl;
+        const newAmount = Math.min(remainingBestand, originalCap);
+        pos.stueckzahl = newAmount;
+        updateWTMetrics(monoWT, config);
+        remainingBestand -= newAmount;
+      }
+    }
   }
 
-  const finalSingletonWTs = singletonWTs.filter(wt => !backfillRemoved.has(wt.id));
-  const combinedWTs = [...allWTs, ...finalSingletonWTs];
+  // ── WT-Typ-Downsize ──────────────────────────────────────────────────────
+  // GROSS mono-WTs whose single article fits on KLEIN → downsize
+  for (const wt of allWTs) {
+    if (removedWTIds.has(wt.id)) continue;
+    if (wt.typ !== 'GROSS' || wt.positionen.length !== 1) continue;
 
-  // ── Weight balancing ────────────────────────────────────────────────────────
-  for (const srcWT of combinedWTs) {
+    const pos = wt.positionen[0];
+    const kleinGrid = bestGrid(1, WT_WIDTH, WT_DEPTH_KLEIN, config.teiler_breite_mm, config.min_segment_mm);
+    if (!kleinGrid) continue;
+    const cap = itemsPerZone(pos.hoehe_mm, pos.breite_mm, pos.laenge_mm, kleinGrid.zoneW, kleinGrid.zoneD, config.griff_puffer_mm);
+    if (cap >= pos.stueckzahl) {
+      wt.typ = 'KLEIN';
+      wt.flaeche_brutto_mm2 = KLEIN_AREA;
+      setWTGrid(wt, kleinGrid.cols, kleinGrid.rows, kleinGrid.zoneW, kleinGrid.zoneD);
+      updateWTMetrics(wt, config);
+    }
+  }
+
+  // ── Weight balancing ─────────────────────────────────────────────────────
+  const activeWTs = allWTs.filter(wt => !removedWTIds.has(wt.id) && wt.positionen.length > 0);
+
+  for (const srcWT of activeWTs) {
     if (srcWT.gesamtgewicht_kg <= config.gewicht_soft_kg) continue;
     if (srcWT.positionen.length <= 1) continue;
     const lightest = [...srcWT.positionen]
       .sort((a, b) => a.gewicht_kg * a.stueckzahl - b.gewicht_kg * b.stueckzahl)[0];
-    for (const tgtWT of combinedWTs) {
+    for (const tgtWT of activeWTs) {
       if (tgtWT === srcWT || tgtWT.typ !== srcWT.typ) continue;
       if (tryMovePositionToWT(srcWT, lightest, tgtWT, config)) break;
     }
   }
 
-  // ── Consolidation ──────────────────────────────────────────────────────────
-  const consolidationCandidates = combinedWTs
-    .filter(wt =>
-      wt.zone_count > 0 &&
-      wt.positionen.length / wt.zone_count < 0.30 &&
-      wt.gesamtgewicht_kg < config.gewicht_soft_kg &&
-      !wt.positionen.some(p => p.abc_klasse === 'A'),
-    )
-    .sort((a, b) => (a.positionen.length / a.zone_count) - (b.positionen.length / b.zone_count));
-
-  const candidateIds = new Set(consolidationCandidates.map(wt => wt.id));
-
-  for (const srcWT of consolidationCandidates) {
-    if (srcWT.positionen.length === 0) continue;
-    for (const pos of [...srcWT.positionen]) {
-      for (const tgtWT of combinedWTs) {
-        if (tgtWT === srcWT || candidateIds.has(tgtWT.id)) continue;
-        if (tgtWT.typ !== srcWT.typ) continue;
-        if (tryMovePositionToWT(srcWT, pos, tgtWT, config)) break;
-      }
-    }
-  }
-
-  return combinedWTs.filter(wt => wt.positionen.length > 0);
+  return activeWTs.filter(wt => wt.positionen.length > 0);
 }
