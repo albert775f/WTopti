@@ -460,6 +460,8 @@ export function processPhase3(
   const artToWTs = new Map<string, Set<WT>>();
   // Mono-WTs created in Pass 1 per article
   const monoIndex = new Map<string, WT[]>();
+  // partnerIndex needed in both Pass 1 (zone reservation) and Pass 2
+  const { partnerIndex } = affinityResult;
 
   function registerArtToWT(artNr: string, wt: WT) {
     if (!artToWTs.has(artNr)) artToWTs.set(artNr, new Set());
@@ -474,20 +476,30 @@ export function processPhase3(
     const preferredTyp = wtTypePlan.get(artNr) ?? 'KLEIN';
     const typesToTry: WTTyp[] = preferredTyp === 'KLEIN' ? ['KLEIN', 'GROSS'] : ['GROSS', 'KLEIN'];
 
+    // P1: Zone reservation — pre-size grid for expected co-tenants so Pass 2 can add partners
+    const partners = partnerIndex.get(artNr);
+    const expectedZones = partners
+      ? Math.min(1 + partners.length, MAX_ARTICLES_PER_WT)
+      : 1;
+
     let grid: { cols: number; rows: number; zoneW: number; zoneD: number } | null = null;
     let cap = 0;
     let wtTyp: WTTyp = preferredTyp;
 
     for (const tryTyp of typesToTry) {
       const tryWtD = getWTDepth(tryTyp);
-      const tryGrid = bestGrid(1, WT_WIDTH, tryWtD, config.teiler_breite_mm, config.min_segment_mm);
-      if (!tryGrid) continue;
-      const tryCap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, tryGrid.zoneW, tryGrid.zoneD, config.griff_puffer_mm);
-      if (tryCap <= 0) continue;
-      grid = tryGrid;
-      cap = tryCap;
-      wtTyp = tryTyp;
-      break;
+      // Try with expectedZones, degrade to 1 if article doesn't fit in smaller zones
+      for (let zones = expectedZones; zones >= 1; zones--) {
+        const tryGrid = bestGrid(zones, WT_WIDTH, tryWtD, config.teiler_breite_mm, config.min_segment_mm);
+        if (!tryGrid) continue;
+        const tryCap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, tryGrid.zoneW, tryGrid.zoneD, config.griff_puffer_mm);
+        if (tryCap <= 0) continue;
+        grid = tryGrid;
+        cap = tryCap;
+        wtTyp = tryTyp;
+        break;
+      }
+      if (grid) break;
     }
 
     if (!grid || cap <= 0) continue;
@@ -530,7 +542,6 @@ export function processPhase3(
   }
 
   // ── Pass 2: Redistribute onto partner WTs ───────────────────────────────
-  const { partnerIndex } = affinityResult;
 
   // Sort articles by partner count desc, then umsatz desc, then bestand desc
   const sortedArticles = [...processed]
@@ -570,6 +581,14 @@ export function processPhase3(
     }
 
     if (targetWTs.length === 0) continue;
+
+    // P2: Sort target WTs by number of A's partners already on them (most first)
+    const partnerSetA = new Set((partners ?? []).map(p => p.partner));
+    targetWTs.sort((a, b) => {
+      const aScore = a.positionen.filter(p => partnerSetA.has(p.artikelnummer)).length;
+      const bScore = b.positionen.filter(p => partnerSetA.has(p.artikelnummer)).length;
+      return bScore - aScore;
+    });
 
     // Total bestand of A currently across all active WTs
     let totalBestand = 0;
@@ -622,10 +641,119 @@ export function processPhase3(
         const originalCap = grid
           ? itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm)
           : pos.stueckzahl;
-        const newAmount = Math.min(remainingBestand, originalCap);
+        // B1: weight cap — mono-WT must not exceed gewicht_hard_kg
+        let newAmount = Math.min(remainingBestand, originalCap);
+        if (art.gewicht_kg > 0) {
+          const maxByWeight = Math.floor(config.gewicht_hard_kg / art.gewicht_kg);
+          newAmount = Math.min(newAmount, maxByWeight);
+        }
         pos.stueckzahl = newAmount;
         updateWTMetrics(monoWT, config);
         remainingBestand -= newAmount;
+      }
+    }
+
+    // C1 safety: create fallback mono-WTs for any stock not yet accounted for
+    let verifyTotal = 0;
+    for (const wt of allWTs) {
+      if (removedWTIds.has(wt.id)) continue;
+      const pos = wt.positionen.find(p => p.artikelnummer === artNr);
+      if (pos) verifyTotal += pos.stueckzahl;
+    }
+    let deficit = totalBestand - verifyTotal;
+    if (deficit > 0) {
+      const fbTyp = wtTypePlan.get(artNr) ?? 'KLEIN';
+      const fbWtD = getWTDepth(fbTyp);
+      const fbGrid = bestGrid(1, WT_WIDTH, fbWtD, config.teiler_breite_mm, config.min_segment_mm);
+      if (fbGrid) {
+        const fbCap = itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, fbGrid.zoneW, fbGrid.zoneD, config.griff_puffer_mm);
+        while (deficit > 0 && fbCap > 0) {
+          let toPlace = Math.min(deficit, fbCap);
+          if (art.gewicht_kg > 0) {
+            while (toPlace > 0 && toPlace * art.gewicht_kg > config.gewicht_hard_kg) toPlace--;
+          }
+          if (toPlace <= 0) break;
+          const fbWT = createWT(nextId(fbTyp), fbTyp, art.cluster_id ?? 0);
+          setWTGrid(fbWT, fbGrid.cols, fbGrid.rows, fbGrid.zoneW, fbGrid.zoneD);
+          fbWT.positionen.push({
+            artikelnummer: artNr,
+            bezeichnung: art.bezeichnung,
+            stueckzahl: toPlace,
+            grundflaeche_mm2: art.grundflaeche_mm2,
+            gewicht_kg: art.gewicht_kg,
+            abc_klasse: art.abc_klasse,
+            hoehe_mm: art.hoehe_mm,
+            breite_mm: art.breite_mm,
+            laenge_mm: art.laenge_mm,
+            max_stapelhoehe: art.max_stapelhoehe,
+            zone_index: 0,
+          });
+          updateWTMetrics(fbWT, config);
+          allWTs.push(fbWT);
+          registerArtToWT(artNr, fbWT);
+          deficit -= toPlace;
+        }
+      }
+    }
+  }
+
+  // ── Pass 2b: Invitation pass — fill empty reserved zones ────────────────
+  // For each active WT with spare zones, invite partners of its current articles
+  const pass2bWTs = allWTs.filter(
+    wt => !removedWTIds.has(wt.id) && wt.positionen.length > 0 && wt.positionen.length < wt.zone_count,
+  );
+
+  for (const wt of pass2bWTs) {
+    const wtD = getWTDepth(wt.typ);
+    const ownerArtNrs = wt.positionen.map(p => p.artikelnummer);
+
+    outer: for (const ownerArtNr of ownerArtNrs) {
+      const ownerPartners = partnerIndex.get(ownerArtNr);
+      if (!ownerPartners) continue;
+
+      for (const { partner: partnerArtNr } of ownerPartners) {
+        if (wt.positionen.length >= wt.zone_count) break outer;
+        if (wt.positionen.some(p => p.artikelnummer === partnerArtNr)) continue;
+
+        const partnerArt = artDataMap.get(partnerArtNr);
+        if (!partnerArt) continue;
+
+        // Only take stock from partner's mono-WTs
+        const partnerMonoWTs = (monoIndex.get(partnerArtNr) ?? []).filter(
+          mwt => !removedWTIds.has(mwt.id) && mwt.positionen.some(p => p.artikelnummer === partnerArtNr),
+        );
+        if (partnerMonoWTs.length === 0) continue;
+
+        const mengeAvailable = partnerMonoWTs.reduce((sum, mwt) => {
+          const pos = mwt.positionen.find(p => p.artikelnummer === partnerArtNr);
+          return sum + (pos?.stueckzahl ?? 0);
+        }, 0);
+        if (mengeAvailable <= 0) continue;
+
+        const toPlace = Math.ceil(mengeAvailable / (partnerMonoWTs.length + 1));
+        const placed = tryAddArticleToWT(wt, partnerArtNr, partnerArt, toPlace, wtD, config);
+
+        if (placed > 0) {
+          registerArtToWT(partnerArtNr, wt);
+          let toRemove = placed;
+          for (const mwt of partnerMonoWTs) {
+            if (toRemove <= 0) break;
+            const pos = mwt.positionen.find(p => p.artikelnummer === partnerArtNr);
+            if (!pos) continue;
+            const take = Math.min(toRemove, pos.stueckzahl);
+            pos.stueckzahl -= take;
+            toRemove -= take;
+            updateWTMetrics(mwt, config);
+            if (pos.stueckzahl <= 0) {
+              mwt.positionen = mwt.positionen.filter(p => p.artikelnummer !== partnerArtNr);
+              updateWTMetrics(mwt, config);
+              if (mwt.positionen.length === 0) {
+                removedWTIds.add(mwt.id);
+                artToWTs.get(partnerArtNr)?.delete(mwt);
+              }
+            }
+          }
+        }
       }
     }
   }
