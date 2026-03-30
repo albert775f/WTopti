@@ -636,13 +636,19 @@ export function processPhase3(
         removedWTIds.add(monoWT.id);
         artToWTs.get(artNr)?.delete(monoWT);
       } else {
-        // Cap to single-zone capacity of this mono WT
-        const grid = bestGrid(1, WT_WIDTH, getWTDepth(monoWT.typ), config.teiler_breite_mm, config.min_segment_mm);
-        const originalCap = grid
-          ? itemsPerZone(art.hoehe_mm, art.breite_mm, art.laenge_mm, grid.zoneW, grid.zoneD, config.griff_puffer_mm)
-          : pos.stueckzahl;
+        // If no partner joined this mono-WT, reclaim reserved zones → full zone capacity
+        if (monoWT.positionen.length === 1) {
+          const soloGrid = bestGrid(1, WT_WIDTH, getWTDepth(monoWT.typ), config.teiler_breite_mm, config.min_segment_mm);
+          if (soloGrid) setWTGrid(monoWT, soloGrid.cols, soloGrid.rows, soloGrid.zoneW, soloGrid.zoneD);
+        }
+        // Use the WT's actual zone dimensions (not a hypothetical full-zone grid)
+        const actualCap = itemsPerZone(
+          art.hoehe_mm, art.breite_mm, art.laenge_mm,
+          monoWT.zone_w_mm, monoWT.zone_d_mm,
+          config.griff_puffer_mm,
+        );
         // B1: weight cap — mono-WT must not exceed gewicht_hard_kg
-        let newAmount = Math.min(remainingBestand, originalCap);
+        let newAmount = Math.min(remainingBestand, actualCap);
         if (art.gewicht_kg > 0) {
           const maxByWeight = Math.floor(config.gewicht_hard_kg / art.gewicht_kg);
           newAmount = Math.min(newAmount, maxByWeight);
