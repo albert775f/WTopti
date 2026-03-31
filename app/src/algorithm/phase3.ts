@@ -355,11 +355,12 @@ function addArticleToWT(
     stockForThisZone, zoneWidth, config.gewicht_hard_kg,
   );
   if (seg === null) {
-    // Article needs full zone — take all remaining depth
+    // Article needs full zone — try to claim all remaining depth for Strategy 2.
+    // Do NOT return early here: Strategy 3 (Mode-B free column) must still be attempted
+    // even when no depth remains for a new row.
     const usedNow = wt.zone_depths_mm.reduce((s, d) => s + d, 0);
     const rem = wtDepth - usedNow;
-    if (rem <= 0) return 0;
-    seg = rem;
+    seg = rem > 0 ? rem : wtDepth; // Strategy 2 will reject this if rem ≤ 0
   }
 
   // === Strategy 1: Zone shrinking ===
@@ -395,24 +396,48 @@ function addArticleToWT(
   const usedDepth = wt.zone_depths_mm.reduce((s, d) => s + d, 0);
   const rows = wt.zone_depths_mm.length;
 
-  if (usedDepth + seg <= wtDepth && rows < maxR) {
-    const cap = zoneCapacity(art, zoneWidth, seg, config.griff_puffer_mm);
-    if (cap > 0) {
-      let toPlace = Math.min(remainingStk, cap);
-      if (art.gewicht_kg > 0) {
-        const maxByWeight = Math.floor(
-          (config.gewicht_hard_kg - wt.gesamtgewicht_kg) / art.gewicht_kg,
+  if (rows < maxR) {
+    // Compute the segment based on what actually fits in the free depth.
+    // The initial `seg` was computed for maxCapInFullZone (full WT depth), which can
+    // exceed the free depth when the WT already has rows. Recompute for free depth.
+    const freeD = wtDepth - usedDepth;
+    let effectiveSeg = seg;
+    let effectiveStk = remainingStk;
+    if (freeD > 0 && usedDepth + seg > wtDepth) {
+      // Try again with the free depth as the zone capacity limit
+      const capInFree = zoneCapacity(art, zoneWidth, freeD, config.griff_puffer_mm);
+      if (capInFree > 0) {
+        const stkInFree = Math.min(remainingStk, capInFree);
+        const segInFree = requiredDepthForStock(
+          art.hoehe_mm, art.breite_mm, art.laenge_mm, art.gewicht_kg,
+          stkInFree, zoneWidth, config.gewicht_hard_kg,
         );
-        toPlace = Math.min(toPlace, maxByWeight);
+        if (segInFree !== null && usedDepth + segInFree <= wtDepth) {
+          effectiveSeg = segInFree;
+          effectiveStk = stkInFree;
+        }
       }
-      if (toPlace > 0) {
-        const rowIdx = rows;
-        const colIdx = 0;
-        const zoneIdx = rowIdx * (wt.mode === 'B' ? 2 : 1) + colIdx;
-        wt.zone_depths_mm.push(seg);
-        wt.positionen.push(makePosition(artNr, art, toPlace, zoneIdx, rowIdx, colIdx));
-        updateWTMetrics(wt, config);
-        return toPlace;
+    }
+
+    if (usedDepth + effectiveSeg <= wtDepth) {
+      const cap = zoneCapacity(art, zoneWidth, effectiveSeg, config.griff_puffer_mm);
+      if (cap > 0) {
+        let toPlace = Math.min(effectiveStk, cap);
+        if (art.gewicht_kg > 0) {
+          const maxByWeight = Math.floor(
+            (config.gewicht_hard_kg - wt.gesamtgewicht_kg) / art.gewicht_kg,
+          );
+          toPlace = Math.min(toPlace, maxByWeight);
+        }
+        if (toPlace > 0) {
+          const rowIdx = rows;
+          const colIdx = 0;
+          const zoneIdx = rowIdx * (wt.mode === 'B' ? 2 : 1) + colIdx;
+          wt.zone_depths_mm.push(effectiveSeg);
+          wt.positionen.push(makePosition(artNr, art, toPlace, zoneIdx, rowIdx, colIdx));
+          updateWTMetrics(wt, config);
+          return toPlace;
+        }
       }
     }
   }
@@ -498,182 +523,112 @@ function tryMovePositionToWT(
 }
 
 // ============================================================
-// Step 1: Cluster Formation
+// Step 0: Pair-pack — guarantee co-location for top affinity pairs
 // ============================================================
 
-interface Cluster {
-  id: number;
-  members: string[]; // artNr, seed first
-}
-
-const HUB_THRESHOLD = 10; // articles with >10 partners → hub-scatter
-
-function buildClusters(
-  processed: ArtikelProcessed[],
+/**
+ * Cluster-pack top affinity articles: for each article (sorted by total affinity
+ * connectivity DESC), create one Mode B WT containing that article as anchor plus
+ * as many of its affinity partners as geometrically fit.
+ *
+ * This co-locates many pairs per WT rather than one pair per WT, avoiding the
+ * stock-exhaustion problem that a pair-by-pair strategy causes.
+ * Updates remainingStock in-place for all placed articles.
+ */
+function step0ClusterPack(
+  artDataMap: Map<string, ArtikelProcessed>,
   partnerIndex: Map<string, Array<{ partner: string; affinity: number }>>,
   wtTypePlan: Map<string, WTTyp>,
   config: WTConfig,
-  artDataMap: Map<string, ArtikelProcessed>,
-): Cluster[] {
-  const clusters: Cluster[] = [];
-  const assigned = new Set<string>(); // artNr → seeded into a cluster
-  const hubSet = new Set<string>();   // artNr → used as hub seed (must not join partner clusters)
-
-  // Sort by partner count desc, then umsatz desc
-  const sortedByPartners = [...processed]
-    .filter(a => a.bestand > 0)
-    .sort((a, b) => {
-      const aNr = String(a.artikelnummer);
-      const bNr = String(b.artikelnummer);
-      const aP = partnerIndex.get(aNr)?.length ?? 0;
-      const bP = partnerIndex.get(bNr)?.length ?? 0;
-      if (bP !== aP) return bP - aP;
-      return b.umsatz_gesamt - a.umsatz_gesamt;
-    });
-
-  // Step 1a: Hub-Scatter
-  for (const art of sortedByPartners) {
-    const artNr = String(art.artikelnummer);
-    const partners = partnerIndex.get(artNr) ?? [];
-    if (partners.length <= HUB_THRESHOLD) continue;
-    if (assigned.has(artNr)) continue;
-
-    const fitsMode = articleFitsMode(art);
-    const zw = getZoneWidth(fitsMode === 'BOTH' ? 'B' : 'A');
-    const typ = wtTypePlan.get(artNr) ?? 'KLEIN';
-    const depth = getWTDepth(typ);
-    const cap = Math.max(1, zoneCapacity(art, zw, depth, config.griff_puffer_mm));
-    const K = Math.max(1, Math.ceil(art.bestand / cap));
-
-    const sortedPartners = [...partners].sort((x, y) => y.affinity - x.affinity);
-
-    for (let i = 0; i < K; i++) {
-      const members: string[] = [artNr];
-      for (const { partner } of sortedPartners.slice(i * 5, (i + 1) * 5)) {
-        const pArt = artDataMap.get(partner);
-        if (pArt && pArt.bestand > 0) members.push(partner);
-      }
-      clusters.push({ id: clusters.length, members });
-    }
-    assigned.add(artNr);
-    hubSet.add(artNr);
-  }
-
-  // Step 1b: Affinity Groups (non-hubs)
-  for (const art of sortedByPartners) {
-    const artNr = String(art.artikelnummer);
-    if (assigned.has(artNr)) continue;
-
-    const partners = partnerIndex.get(artNr) ?? [];
-    const members: string[] = [artNr];
-    assigned.add(artNr);
-
-    for (const { partner } of [...partners].sort((x, y) => y.affinity - x.affinity)) {
-      if (members.length >= 6) break;
-      if (assigned.has(partner)) continue;
-      if (hubSet.has(partner)) continue;
-      const pArt = artDataMap.get(partner);
-      if (pArt && pArt.bestand > 0) {
-        members.push(partner);
-        assigned.add(partner);
-      }
-    }
-    clusters.push({ id: clusters.length, members });
-  }
-
-  // Step 1c: Singletons
-  for (const art of processed) {
-    const artNr = String(art.artikelnummer);
-    if (art.bestand <= 0 || assigned.has(artNr)) continue;
-    clusters.push({ id: clusters.length, members: [artNr] });
-    assigned.add(artNr);
-  }
-
-  return clusters;
-}
-
-// ============================================================
-// Step 2: FFD Packing per Cluster
-// ============================================================
-
-function packCluster(
-  cluster: Cluster,
-  artDataMap: Map<string, ArtikelProcessed>,
-  remainingStock: Map<string, number>,
-  wtTypePlan: Map<string, WTTyp>,
-  config: WTConfig,
   nextId: (typ: WTTyp) => string,
+  remainingStock: Map<string, number>,
 ): WT[] {
+  // Build bidirectional partner lookup
+  const reverseIndex = new Map<string, Array<{ seed: string; affinity: number }>>();
+  for (const [seed, partners] of partnerIndex.entries()) {
+    for (const { partner, affinity } of partners) {
+      if (!reverseIndex.has(partner)) reverseIndex.set(partner, []);
+      reverseIndex.get(partner)!.push({ seed, affinity });
+    }
+  }
+
+  const getAllPartners = (artNr: string): Array<{ nr: string; affinity: number }> => {
+    const seen = new Set<string>();
+    const result: Array<{ nr: string; affinity: number }> = [];
+    for (const { partner, affinity } of partnerIndex.get(artNr) ?? []) {
+      if (!seen.has(partner)) { seen.add(partner); result.push({ nr: partner, affinity }); }
+    }
+    for (const { seed, affinity } of reverseIndex.get(artNr) ?? []) {
+      if (!seen.has(seed)) { seen.add(seed); result.push({ nr: seed, affinity }); }
+    }
+    return result.sort((a, b) => b.affinity - a.affinity);
+  };
+
+  // Sort candidate anchors by total affinity weight DESC (most connected = most pairs to gain)
+  const candidates = [...artDataMap.keys()]
+    .filter(nr => {
+      const stk = remainingStock.get(nr) ?? 0;
+      if (stk <= 0) return false;
+      const art = artDataMap.get(nr)!;
+      return articleFitsMode(art) === 'BOTH' && getAllPartners(nr).length > 0;
+    })
+    .map(nr => ({
+      nr,
+      totalAff: getAllPartners(nr).reduce((s, p) => s + p.affinity, 0),
+    }))
+    .sort((a, b) => b.totalAff - a.totalAff);
+
   const clusterWTs: WT[] = [];
 
-  // Sort by required depth segment DESC (FFD: largest first)
-  const articles = cluster.members
-    .map(artNr => ({ artNr, art: artDataMap.get(artNr) }))
-    .filter((x): x is { artNr: string; art: ArtikelProcessed } =>
-      x.art !== undefined && (remainingStock.get(x.artNr) ?? 0) > 0,
-    )
-    .sort((a, b) => {
-      const zwA = getZoneWidth(articleFitsMode(a.art) === 'BOTH' ? 'B' : 'A');
-      const zwB = getZoneWidth(articleFitsMode(b.art) === 'BOTH' ? 'B' : 'A');
-      const depA = getWTDepth(wtTypePlan.get(a.artNr) ?? 'KLEIN');
-      const depB = getWTDepth(wtTypePlan.get(b.artNr) ?? 'KLEIN');
-      const stkA = remainingStock.get(a.artNr) ?? 0;
-      const stkB = remainingStock.get(b.artNr) ?? 0;
-      const capA = Math.max(1, zoneCapacity(a.art, zwA, depA, config.griff_puffer_mm));
-      const capB = Math.max(1, zoneCapacity(b.art, zwB, depB, config.griff_puffer_mm));
-      const segA = requiredDepthForStock(
-        a.art.hoehe_mm, a.art.breite_mm, a.art.laenge_mm, a.art.gewicht_kg,
-        Math.min(stkA, capA), zwA, config.gewicht_hard_kg,
-      ) ?? 800;
-      const segB = requiredDepthForStock(
-        b.art.hoehe_mm, b.art.breite_mm, b.art.laenge_mm, b.art.gewicht_kg,
-        Math.min(stkB, capB), zwB, config.gewicht_hard_kg,
-      ) ?? 800;
-      return segB - segA; // DESC
-    });
+  for (const { nr: anchorNr } of candidates) {
+    const anchorStk = remainingStock.get(anchorNr) ?? 0;
+    if (anchorStk <= 0) continue; // stock depleted by earlier clusters
 
-  for (const { artNr, art } of articles) {
-    let stk = remainingStock.get(artNr) ?? 0;
-    if (stk <= 0) continue;
+    const anchorArt = artDataMap.get(anchorNr);
+    if (!anchorArt || articleFitsMode(anchorArt) !== 'BOTH') continue;
 
-    while (stk > 0) {
-      // Phase A: try existing cluster WTs
-      let placed = 0;
-      for (const wt of clusterWTs) {
-        const toPlace = addArticleToWT(wt, artNr, art, stk, config, artDataMap);
-        if (toPlace > 0) {
-          stk -= toPlace;
-          remainingStock.set(artNr, (remainingStock.get(artNr) ?? 0) - toPlace);
-          placed = toPlace;
-          break;
-        }
+    const partners = getAllPartners(anchorNr);
+    // Skip anchor if no partner has available stock
+    if (!partners.some(p => (remainingStock.get(p.nr) ?? 0) > 0)) continue;
+
+    // WT type: GROSS if anchor or any partner prefers GROSS (more depth → fits more)
+    const needsGross =
+      wtTypePlan.get(anchorNr) === 'GROSS' ||
+      partners.some(p => wtTypePlan.get(p.nr) === 'GROSS' && (remainingStock.get(p.nr) ?? 0) > 0);
+    const typ: WTTyp = needsGross ? 'GROSS' : 'KLEIN';
+
+    const wt = createWT(nextId(typ), typ, 'B', 0);
+
+    const placedAnchor = addArticleToWT(wt, anchorNr, anchorArt, anchorStk, config, artDataMap);
+    if (placedAnchor <= 0) continue;
+
+    remainingStock.set(anchorNr, anchorStk - placedAnchor);
+
+    // Greedily pack partners in affinity DESC order.
+    // Limit each partner's contribution to 90% of remaining stock so that popular hub
+    // articles retain some stock for step1 co-seeding. Without this cap, hubs consumed
+    // as partners across many clusters reach 0 stock before step1 can co-locate them.
+    const PARTNER_STOCK_FRACTION = 0.9;
+    let partnersPlaced = 0;
+    for (const { nr: pNr } of partners) {
+      const pStk = remainingStock.get(pNr) ?? 0;
+      if (pStk <= 0) continue;
+      const pArt = artDataMap.get(pNr);
+      if (!pArt) continue;
+
+      const cappedStk = Math.max(1, Math.ceil(pStk * PARTNER_STOCK_FRACTION));
+      const placed = addArticleToWT(wt, pNr, pArt, cappedStk, config, artDataMap);
+      if (placed > 0) {
+        remainingStock.set(pNr, pStk - placed);
+        partnersPlaced++;
       }
-      if (placed > 0) continue;
+    }
 
-      // Phase B: create new WT
-      const mode: 'A' | 'B' = articleFitsMode(art) === 'BOTH' ? 'B' : 'A';
-      const typ = wtTypePlan.get(artNr) ?? 'KLEIN';
-      const wt = createWT(nextId(typ), typ, mode, cluster.id);
-      const toPlace = addArticleToWT(wt, artNr, art, stk, config, artDataMap);
-
-      if (toPlace > 0) {
-        stk -= toPlace;
-        remainingStock.set(artNr, (remainingStock.get(artNr) ?? 0) - toPlace);
-        clusterWTs.push(wt);
-      } else if (mode === 'B') {
-        // Fallback to Mode A if Mode B failed (wide article mismatch)
-        const wtA = createWT(nextId(typ), typ, 'A', cluster.id);
-        const toPlaceA = addArticleToWT(wtA, artNr, art, stk, config, artDataMap);
-        if (toPlaceA > 0) {
-          stk -= toPlaceA;
-          remainingStock.set(artNr, (remainingStock.get(artNr) ?? 0) - toPlaceA);
-          clusterWTs.push(wtA);
-        } else {
-          break; // C1 safety net handles any remaining deficit
-        }
-      } else {
-        break;
-      }
+    if (partnersPlaced > 0) {
+      clusterWTs.push(wt);
+    } else {
+      // No partner fit — rollback anchor and skip this cluster
+      remainingStock.set(anchorNr, anchorStk);
     }
   }
 
@@ -681,49 +636,317 @@ function packCluster(
 }
 
 // ============================================================
-// Step 3: Consolidation
+// Step 1: Pack tight — Pure FFD, no cluster pre-grouping
 // ============================================================
 
-function consolidate(
+function step1PackTight(
+  processed: ArtikelProcessed[],
+  artDataMap: Map<string, ArtikelProcessed>,
+  wtTypePlan: Map<string, WTTyp>,
+  config: WTConfig,
+  nextId: (typ: WTTyp) => string,
+  partnerIndex?: Map<string, Array<{ partner: string; affinity: number }>>,
+  preStock?: Map<string, number>,
+  preWTs?: WT[],
+): { allWTs: WT[]; remainingStock: Map<string, number> } {
+  const remainingStock: Map<string, number> = preStock ?? new Map<string, number>();
+  if (!preStock) {
+    for (const art of processed) {
+      if (art.bestand > 0) remainingStock.set(String(art.artikelnummer), art.bestand);
+    }
+  }
+
+  const segOf = (art: ArtikelProcessed): number => {
+    const artNr = String(art.artikelnummer);
+    const mode = articleFitsMode(art) === 'BOTH' ? 'B' : 'A';
+    const zw = getZoneWidth(mode);
+    const typ = wtTypePlan.get(artNr) ?? 'KLEIN';
+    const stk = remainingStock.get(artNr) ?? 0;
+    const cap = Math.max(1, zoneCapacity(art, zw, getWTDepth(typ), config.griff_puffer_mm));
+    return requiredDepthForStock(
+      art.hoehe_mm, art.breite_mm, art.laenge_mm, art.gewicht_kg,
+      Math.min(stk, cap), zw, config.gewicht_hard_kg,
+    ) ?? 800;
+  };
+
+  // Build reverse index for bidirectional partner lookup
+  const reverseIndex = new Map<string, Array<{ seed: string; affinity: number }>>();
+  if (partnerIndex) {
+    for (const [seed, partners] of partnerIndex.entries()) {
+      for (const { partner, affinity } of partners) {
+        if (!reverseIndex.has(partner)) reverseIndex.set(partner, []);
+        reverseIndex.get(partner)!.push({ seed, affinity });
+      }
+    }
+  }
+
+  // Affinity-interleaved ordering: sort globally by segment DESC, then for each article
+  // insert its top affinity partners immediately after it in the queue. This ensures
+  // that when partner B is processed, A's fresh WT still has free zones → co-location.
+  const sortedBySegment = processed
+    .filter(a => a.bestand > 0)
+    .sort((a, b) => segOf(b) - segOf(a));
+
+  const articles: ArtikelProcessed[] = [];
+  const queued = new Set<string>();
+
+  const getDirectPartners = (artNr: string): Array<{ nr: string; affinity: number }> => {
+    const seen = new Set<string>();
+    const result: Array<{ nr: string; affinity: number }> = [];
+    for (const { partner, affinity } of partnerIndex?.get(artNr) ?? []) {
+      if (!seen.has(partner)) { seen.add(partner); result.push({ nr: partner, affinity }); }
+    }
+    for (const { seed, affinity } of reverseIndex.get(artNr) ?? []) {
+      if (!seen.has(seed)) { seen.add(seed); result.push({ nr: seed, affinity }); }
+    }
+    return result.sort((a, b) => b.affinity - a.affinity);
+  };
+
+  for (const art of sortedBySegment) {
+    const artNr = String(art.artikelnummer);
+    if (queued.has(artNr)) continue;
+    queued.add(artNr);
+    articles.push(art);
+
+    // Immediately queue direct affinity partners so they share the fresh WT
+    for (const { nr } of getDirectPartners(artNr)) {
+      if (queued.has(nr)) continue;
+      const pArt = artDataMap.get(nr);
+      if (pArt && pArt.bestand > 0) {
+        queued.add(nr);
+        articles.push(pArt);
+      }
+    }
+  }
+
+  // Singletons not yet queued (no affinity partners, sorted by segment)
+  for (const art of sortedBySegment) {
+    const artNr = String(art.artikelnummer);
+    if (!queued.has(artNr)) {
+      articles.push(art);
+      queued.add(artNr);
+    }
+  }
+
+  const allWTs: WT[] = preWTs ? [...preWTs] : [];
+
+  // Helper: seed top affinity partners onto a freshly created WT.
+  // Called right after the anchor article is placed on the new WT.
+  // Each partner can be co-seeded on multiple WTs (once per anchor) so that
+  // hub articles with many partners accumulate co-locations across all partners.
+  const coSeedPartners = (anchorNr: string, wt: WT): void => {
+    for (const { nr: pNr } of getDirectPartners(anchorNr)) {
+      const pStk = remainingStock.get(pNr) ?? 0;
+      if (pStk <= 0) continue;
+      const pArt = artDataMap.get(pNr);
+      if (!pArt) continue;
+      const pPlaced = addArticleToWT(wt, pNr, pArt, pStk, config, artDataMap);
+      if (pPlaced > 0) {
+        remainingStock.set(pNr, pStk - pPlaced);
+      }
+    }
+  };
+
+  for (const art of articles) {
+    const artNr = String(art.artikelnummer);
+    let stk = remainingStock.get(artNr) ?? 0;
+    if (stk <= 0) continue;
+
+    // Build the set of this article's affinity partners (for WT priority)
+    const affPartners = new Set<string>();
+    if (partnerIndex) {
+      for (const { partner } of partnerIndex.get(artNr) ?? []) affPartners.add(partner);
+      for (const { seed } of reverseIndex.get(artNr) ?? []) affPartners.add(seed);
+    }
+
+    while (stk > 0) {
+      let placed = 0;
+
+      // Try existing WTs: prefer WTs that already contain an affinity partner
+      const partnerWTs: WT[] = [];
+      const otherWTs: WT[] = [];
+      for (const wt of allWTs) {
+        if (affPartners.size > 0 && wt.positionen.some(p => affPartners.has(p.artikelnummer))) {
+          partnerWTs.push(wt);
+        } else {
+          otherWTs.push(wt);
+        }
+      }
+      for (const wt of [...partnerWTs, ...otherWTs]) {
+        const toPlace = addArticleToWT(wt, artNr, art, stk, config, artDataMap);
+        if (toPlace > 0) {
+          stk -= toPlace;
+          remainingStock.set(artNr, stk);
+          placed = toPlace;
+          break;
+        }
+      }
+      if (placed > 0) continue;
+
+      // Create new WT
+      const mode: 'A' | 'B' = articleFitsMode(art) === 'BOTH' ? 'B' : 'A';
+      const typ = wtTypePlan.get(artNr) ?? 'KLEIN';
+      const wt = createWT(nextId(typ), typ, mode, 0);
+      const toPlace = addArticleToWT(wt, artNr, art, stk, config, artDataMap);
+
+      if (toPlace > 0) {
+        stk -= toPlace;
+        remainingStock.set(artNr, stk);
+        allWTs.push(wt);
+        coSeedPartners(artNr, wt);
+      } else if (mode === 'B') {
+        const wtA = createWT(nextId(typ), typ, 'A', 0);
+        const toPlaceA = addArticleToWT(wtA, artNr, art, stk, config, artDataMap);
+        if (toPlaceA > 0) {
+          stk -= toPlaceA;
+          remainingStock.set(artNr, stk);
+          allWTs.push(wtA);
+          coSeedPartners(artNr, wtA);
+        } else break;
+      } else break;
+    }
+  }
+
+  return { allWTs, remainingStock };
+}
+
+// ============================================================
+// Step 2: Fill gaps with affinity partners (opportunistic co-location)
+// ============================================================
+
+/**
+ * Partial move: place as much of srcPos.stueckzahl as fits in tgtWT.
+ * On success (placed > 0): reduces srcPos stueckzahl, cleans up empty rows on srcWT.
+ */
+function tryPartialMoveToWT(
+  srcWT: WT, srcPos: WTPosition, tgtWT: WT,
+  config: WTConfig, artDataMap: Map<string, ArtikelProcessed>,
+): boolean {
+  const artNr = srcPos.artikelnummer;
+  if (tgtWT.positionen.some(p => p.artikelnummer === artNr)) return false;
+  const art = artDataMap.get(artNr);
+  if (!art) return false;
+
+  const placed = addArticleToWT(tgtWT, artNr, art, srcPos.stueckzahl, config, artDataMap);
+  if (placed <= 0) return false;
+
+  srcPos.stueckzahl -= placed;
+  if (srcPos.stueckzahl <= 0) {
+    const rowIdx = srcPos.row_index;
+    srcWT.positionen.splice(srcWT.positionen.indexOf(srcPos), 1);
+    const rowStillOccupied = srcWT.positionen.some(p => p.row_index === rowIdx);
+    if (!rowStillOccupied) {
+      srcWT.zone_depths_mm.splice(rowIdx, 1);
+      for (const p of srcWT.positionen) {
+        if (p.row_index > rowIdx) {
+          p.row_index--;
+          p.zone_index = p.row_index * (srcWT.mode === 'B' ? 2 : 1) + p.col_index;
+        }
+      }
+    }
+  }
+  updateWTMetrics(srcWT, config);
+  return true;
+}
+
+function step2FillGaps(
   allWTs: WT[],
   artDataMap: Map<string, ArtikelProcessed>,
   partnerIndex: Map<string, Array<{ partner: string; affinity: number }>>,
   config: WTConfig,
 ): void {
+  // Bidirectional affinity lookup
+  const reverseIndex = new Map<string, Array<{ seed: string; affinity: number }>>();
+  for (const [seed, partners] of partnerIndex.entries()) {
+    for (const { partner, affinity } of partners) {
+      if (!reverseIndex.has(partner)) reverseIndex.set(partner, []);
+      reverseIndex.get(partner)!.push({ seed, affinity });
+    }
+  }
+
   const removedIds = new Set<string>();
 
-  // Fewest positions first = consolidation candidates
-  const sorted = [...allWTs].sort((a, b) => a.positionen.length - b.positionen.length);
-
-  for (const srcWT of sorted) {
-    if (removedIds.has(srcWT.id) || srcWT.positionen.length === 0 || srcWT.positionen.length > 2) {
-      continue;
+  const getCandidates = (artNrsOnWT: Set<string>): Array<[string, number]> => {
+    const candMap = new Map<string, number>();
+    for (const artNr of artNrsOnWT) {
+      for (const { partner, affinity } of partnerIndex.get(artNr) ?? []) {
+        if (!artNrsOnWT.has(partner))
+          candMap.set(partner, Math.max(candMap.get(partner) ?? 0, affinity));
+      }
+      for (const { seed, affinity } of reverseIndex.get(artNr) ?? []) {
+        if (!artNrsOnWT.has(seed))
+          candMap.set(seed, Math.max(candMap.get(seed) ?? 0, affinity));
+      }
     }
+    return [...candMap.entries()].sort((a, b) => b[1] - a[1]);
+  };
 
-    for (const pos of [...srcWT.positionen]) {
-      if (removedIds.has(srcWT.id)) break;
-      const art = artDataMap.get(pos.artikelnummer);
-      if (!art) continue;
+  // Find the best source WT for a partner.
+  // Priority: mono-WT first (→ source empties, fewer WTs); then smallest WT
+  // (fewer articles = less stock per zone = easier partial-move into constrained target).
+  const findSourceWT = (partnerNr: string, exclude: WT): WT | undefined => {
+    let best: WT | undefined;
+    let bestSize = Infinity;
+    for (const w of allWTs) {
+      if (removedIds.has(w.id) || w === exclude) continue;
+      if (!w.positionen.some(p => p.artikelnummer === partnerNr)) continue;
+      if (w.positionen.length === 1) return w; // mono-WT: best possible
+      if (w.positionen.length < bestSize) { best = w; bestSize = w.positionen.length; }
+    }
+    return best;
+  };
 
-      const partnerSet = new Set((partnerIndex.get(pos.artikelnummer) ?? []).map(p => p.partner));
+  const hasFreeCapacity = (wt: WT): boolean => {
+    const wtDepth = getWTDepth(wt.typ);
+    const usedDepth = wt.zone_depths_mm.reduce((s, d) => s + d, 0);
+    const maxR = getMaxRows(wt.typ, wt.mode);
+    if (usedDepth + 100 <= wtDepth && wt.zone_depths_mm.length < maxR) return true;
+    if (wt.mode === 'B') {
+      return wt.zone_depths_mm.some(
+        (_, rowIdx) => wt.positionen.filter(p => p.row_index === rowIdx).length < 2,
+      );
+    }
+    return false;
+  };
 
-      for (const tgtWT of allWTs) {
-        if (tgtWT === srcWT || removedIds.has(tgtWT.id)) continue;
-        if (tgtWT.positionen.some(p => p.artikelnummer === pos.artikelnummer)) continue;
-        if (
-          tgtWT.cluster_id !== srcWT.cluster_id &&
-          !tgtWT.positionen.some(p => partnerSet.has(p.artikelnummer))
-        ) continue;
+  // Sort WTs: primary = free depth DESC (most room = best targets for co-location),
+  // secondary = unique arts DESC (more articles = more affinity candidates to pull in).
+  const freeDepth = (wt: WT) => getWTDepth(wt.typ) - wt.zone_depths_mm.reduce((s, d) => s + d, 0);
+  const uniqueArts = (wt: WT) => new Set(wt.positionen.map(p => p.artikelnummer)).size;
+  const sortedWTs = [...allWTs].sort((a, b) => {
+    const artDiff = uniqueArts(b) - uniqueArts(a);
+    if (artDiff !== 0) return artDiff;
+    return freeDepth(b) - freeDepth(a);
+  });
 
-        if (tryMovePositionToWT(srcWT, pos, tgtWT, config, artDataMap)) {
+  for (const wt of sortedWTs) {
+    if (removedIds.has(wt.id) || wt.positionen.length === 0) continue;
+
+    // Keep filling free zones on this WT until nothing more fits
+    let anyFilled = true;
+    while (anyFilled) {
+      anyFilled = false;
+      if (!hasFreeCapacity(wt)) break;
+
+      const artNrsOnWT = new Set(wt.positionen.map(p => p.artikelnummer));
+      const candidates = getCandidates(artNrsOnWT);
+
+      for (const [partnerNr] of candidates) {
+        const srcWT = findSourceWT(partnerNr, wt);
+        if (!srcWT) continue;
+
+        const srcPos = srcWT.positionen.find(p => p.artikelnummer === partnerNr);
+        if (!srcPos) continue;
+        if (tryPartialMoveToWT(srcWT, srcPos, wt, config, artDataMap)) {
           if (srcWT.positionen.length === 0) removedIds.add(srcWT.id);
+          anyFilled = true;
           break;
         }
       }
     }
   }
 
-  // Remove emptied WTs in-place
+  // Remove emptied WTs
   for (let i = allWTs.length - 1; i >= 0; i--) {
     if (removedIds.has(allWTs[i].id) || allWTs[i].positionen.length === 0) {
       allWTs.splice(i, 1);
@@ -753,27 +976,28 @@ export function processPhase3(
       : `G-${String(++grossCounter).padStart(4, '0')}`;
   }
 
-  // Global remaining stock tracker
+  // Step 0: Pair-pack — guarantee co-location for top affinity pairs
   const remainingStock = new Map<string, number>();
   for (const art of processed) {
     if (art.bestand > 0) remainingStock.set(String(art.artikelnummer), art.bestand);
   }
-
-  // Step 1: Build clusters
-  const clusters = buildClusters(
-    processed, affinityResult.partnerIndex, wtTypePlan, config, artDataMap,
+  const pairedWTs = step0ClusterPack(
+    artDataMap, affinityResult.partnerIndex, wtTypePlan, config, nextId, remainingStock,
   );
 
-  // Step 2: FFD packing per cluster
-  const allWTs: WT[] = [];
-  for (const cluster of clusters) {
-    allWTs.push(...packCluster(cluster, artDataMap, remainingStock, wtTypePlan, config, nextId));
+  // Step 1: Pack tight — affinity-interleaved FFD with pre-paired WTs as starting set
+  const { allWTs } = step1PackTight(
+    processed, artDataMap, wtTypePlan, config, nextId, affinityResult.partnerIndex,
+    remainingStock, pairedWTs,
+  );
+
+  // Step 2: Fill gaps with affinity partners — run 3 passes so that each round's
+  // newly placed partners open fresh opportunities for the next round.
+  for (let pass = 0; pass < 3; pass++) {
+    step2FillGaps(allWTs, artDataMap, affinityResult.partnerIndex, config);
   }
 
-  // Step 3: Consolidation
-  consolidate(allWTs, artDataMap, affinityResult.partnerIndex, config);
-
-  // Step 4: Weight Balancing
+  // Step 3: Weight balancing
   const activeWTs = allWTs.filter(wt => wt.positionen.length > 0);
   for (const srcWT of activeWTs) {
     if (srcWT.gesamtgewicht_kg <= config.gewicht_soft_kg || srcWT.positionen.length <= 1) continue;
@@ -785,32 +1009,7 @@ export function processPhase3(
     }
   }
 
-  // Step 5: WT Type Downsize — GROSS single-position WTs that fit on KLEIN
-  for (const wt of activeWTs) {
-    if (wt.typ !== 'GROSS' || wt.positionen.length !== 1) continue;
-    const pos = wt.positionen[0];
-    const art = artDataMap.get(pos.artikelnummer);
-    if (!art) continue;
-    const zw = getZoneWidth(wt.mode);
-    const capKlein = zoneCapacity(art, zw, WT_DEPTH_KLEIN, config.griff_puffer_mm);
-    const maxByWeight = art.gewicht_kg > 0
-      ? Math.floor(config.gewicht_hard_kg / art.gewicht_kg)
-      : pos.stueckzahl;
-    if (Math.min(capKlein, maxByWeight) >= pos.stueckzahl) {
-      wt.typ = 'KLEIN';
-      wt.flaeche_brutto_mm2 = KLEIN_AREA;
-      if (wt.zone_depths_mm[0] > WT_DEPTH_KLEIN) {
-        const seg = requiredDepthForStock(
-          pos.hoehe_mm, pos.breite_mm, pos.laenge_mm, pos.gewicht_kg,
-          pos.stueckzahl, zw, config.gewicht_hard_kg,
-        );
-        wt.zone_depths_mm[0] = seg ?? WT_DEPTH_KLEIN;
-      }
-      updateWTMetrics(wt, config);
-    }
-  }
-
-  // Step 6: C1 Safety Net — guarantee all stock is placed
+  // Step 4: C1 Safety Net — guarantee all stock is placed
   const finalWTs = activeWTs.filter(wt => wt.positionen.length > 0);
 
   const finalPlaced = new Map<string, number>();
@@ -838,7 +1037,7 @@ export function processPhase3(
       }
       if (toPlace <= 0) break;
 
-      const fbWT = createWT(nextId(fbTyp), fbTyp, 'A', art.cluster_id ?? 0);
+      const fbWT = createWT(nextId(fbTyp), fbTyp, 'A', 0);
       fbWT.zone_depths_mm = [fbDepth];
       fbWT.positionen.push(makePosition(artNr, art, toPlace, 0, 0, 0));
       updateWTMetrics(fbWT, config);

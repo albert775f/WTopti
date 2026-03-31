@@ -229,6 +229,29 @@ export function processPhase1(
       continue;
     }
 
+    // Filter 6b: SEGMENT_TOO_SMALL — article footprint cannot fit in any WT orientation.
+    // A GROSS WT is 500mm wide × 800mm deep. An article fits if at least one dimension ≤ 320mm
+    // can serve as vertical and the remaining two footprint dimensions fit in 500×800mm.
+    {
+      const dims = [art.hoehe_mm, art.breite_mm, art.laenge_mm];
+      const canFit = dims.some((vert, idx) => {
+        if (vert <= 0 || vert > config.hoehe_limit_mm) return false;
+        const fp = dims.filter((_, j) => j !== idx).sort((a, b) => a - b);
+        // fp[0] ≤ fp[1]; need fp[0] ≤ 500mm (WT width) and fp[1] ≤ 800mm (GROSS depth)
+        return fp[0] <= 500 && fp[1] <= 800;
+      });
+      if (!canFit) {
+        validation.artikel_unvollstaendig.push(artNr);
+        exclusionLog.push({
+          artikelnummer: artNr, bezeichnung: bez,
+          exclusion_reason: 'SEGMENT_TOO_SMALL', exclusion_phase: 'FILTER',
+          bestand: bestandVal,
+          detail: `Grundriss passt in keine WT-Ausrichtung (h=${art.hoehe_mm}, b=${art.breite_mm}, l=${art.laenge_mm})`,
+        });
+        continue;
+      }
+    }
+
     // Filter 7: WEIGHT_MISSING
     if (!art.gewicht_kg || art.gewicht_kg <= 0) {
       validation.artikel_unvollstaendig.push(artNr);

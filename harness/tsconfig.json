@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node"
+  },
+  "include": [
+    "**/*",
+    "../app/src/**/*",
+    "../server/src/**/*"
+  ],
+  "exclude": [
+    "../app/src/components",
+    "../app/src/context",
+    "../app/src/hooks",
+    "../app/src/main.tsx",
+    "../app/src/App.tsx",
+    "../app/src/App.css",
+    "../app/src/index.css"
+  ]
+}
