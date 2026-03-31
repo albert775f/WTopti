@@ -9,14 +9,28 @@ import type {
 } from '../types';
 
 /**
+ * Assumed order history window in weeks (1 year).
+ * Used to derive weekly_demand from total ordered quantity.
+ */
+const HISTORY_WEEKS = 52;
+
+/**
  * Phase 1: Data preparation + ABC classification.
  *
- * Phase 0 (filters) runs inside this function:
- *   - Filter 1: Remove SON articles from order history
- *   - Filter 2: Exclude bestand articles without Artikelliste entry
- *   - Filters 3–6: HEIGHT_EXCEEDED, WEIGHT_EXCEEDED, DIMENSIONS_MISSING, WEIGHT_MISSING
+ * Filter chain:
+ *   Filter 1:  Remove SON articles from order history
+ *   Filter 1b: Remove VML/VMB/SAM/OEM prefix orders from order history
+ *   Filter 1c: Exclude Artikelliste articles with VML/VMB/SAM/OEM prefix → PREFIX_EXCLUDED
+ *   Filter 2:  Bestand articles without Artikelliste entry → NO_MASTER_RECORD
+ *   Filter 3:  SPERRGUT
+ *   Filter 4:  HEIGHT_EXCEEDED
+ *   Filter 5:  WEIGHT_EXCEEDED
+ *   Filter 6:  DIMENSIONS_MISSING
+ *   Filter 7:  WEIGHT_MISSING
+ *   Filter 8:  order_count < min_order_count → LOW_FREQUENCY
+ *   Post-ABC:  Bestandsdeckelung → bestand_storojet = min(gesamt, ceil(weekly_demand × refill_weeks))
  *
- * Returns filteredBestellungen (SON-free) for use in Phase 2.
+ * Returns filteredBestellungen (SON + prefix free) for use in Phase 2.
  */
 export function processPhase1(
   artikel: ArtikelData[],
@@ -36,7 +50,7 @@ export function processPhase1(
   };
 
   // ---- Filter 1: Remove SON articles from order history ----
-  const filteredBestellungen: BestellungData[] = [];
+  let filteredBestellungen: BestellungData[] = [];
   const sonArticles = new Map<string, string>(); // artikelnummer → first bezeichnung seen
   for (const b of bestellungen) {
     const bez = b.bezeichnung ?? '';
@@ -59,7 +73,7 @@ export function processPhase1(
     });
   }
 
-  // Build lookup maps
+  // Build bestand lookup
   const bestandMap = new Map<string, number>();
   for (const b of bestand) {
     bestandMap.set(String(b.artikelnummer), b.bestand);
@@ -82,14 +96,32 @@ export function processPhase1(
     }
   }
 
-  // Compute umsatz_gesamt from filtered order history (SON removed)
-  const umsatzMap = new Map<string, number>();
+  // ---- Filter 1b: Remove prefix articles from order history ----
+  const excludePrefixes = (config.exclude_prefixes ?? ['VML', 'VMB', 'SAM', 'OEM']).filter(p => p !== 'SON');
+  const hasExcludedPrefix = (bez: string) => excludePrefixes.some(p => bez.startsWith(p + ' '));
+
+  filteredBestellungen = filteredBestellungen.filter(b => !hasExcludedPrefix(b.bezeichnung ?? ''));
+
+  // ---- Build order statistics from cleaned bestellungen ----
+  // Group menge by [artNr, belegnr] so each order (belegnr) counts once per article
+  const belegMengeMap = new Map<string, Map<string, number>>();
   for (const b of filteredBestellungen) {
     const artNr = String(b.artikelnummer);
-    umsatzMap.set(artNr, (umsatzMap.get(artNr) ?? 0) + b.menge);
+    const belegNr = String(b.belegnummer);
+    if (!belegMengeMap.has(artNr)) belegMengeMap.set(artNr, new Map());
+    const inner = belegMengeMap.get(artNr)!;
+    inner.set(belegNr, (inner.get(belegNr) ?? 0) + b.menge);
   }
 
-  // Detect order article numbers not in Artikelliste (using filtered orders)
+  const umsatzMap = new Map<string, number>();
+  const orderMengenMap = new Map<string, number[]>(); // artNr → [menge per order]
+  for (const [artNr, inner] of belegMengeMap) {
+    const mengen = [...inner.values()];
+    umsatzMap.set(artNr, mengen.reduce((s, v) => s + v, 0));
+    orderMengenMap.set(artNr, mengen);
+  }
+
+  // Detect order article numbers not in Artikelliste
   const artikelSet = new Set(artikel.map(a => String(a.artikelnummer)));
   const bestellArtikelSet = new Set(filteredBestellungen.map(b => String(b.artikelnummer)));
   for (const artNr of bestellArtikelSet) {
@@ -99,7 +131,6 @@ export function processPhase1(
   }
 
   // ---- Filter 2: Bestand articles without Artikelliste entry (NO_MASTER_RECORD) ----
-  // Build bezeichnung lookup from raw order history (before SON filtering)
   const orderBezMap = new Map<string, string>();
   for (const b of bestellungen) {
     if (b.bezeichnung && !orderBezMap.has(String(b.artikelnummer))) {
@@ -125,11 +156,14 @@ export function processPhase1(
   validation.fehlende_artikel = fehlende_artikel;
   validation.fehlende_bestand_gesamt = fehlende_artikel.reduce((s, a) => s + a.bestand, 0);
 
-  // ---- Process articles: apply exclusion filters in spec priority order ----
+  // ---- Process articles: apply exclusion filters ----
+  const minOrderCount = config.min_order_count ?? 5;
+
   const enriched: Array<{
     art: ArtikelData;
     bestandVal: number;
     umsatzGesamt: number;
+    orderMengen: number[];
   }> = [];
 
   for (const art of artikel) {
@@ -137,13 +171,22 @@ export function processPhase1(
     const bestandVal = bestandMap.get(artNr) ?? 0;
 
     if (bestandVal <= 0) continue;
-
-    // SON article: already excluded and logged above
     if (sonArticles.has(artNr)) continue;
 
     const bez = art.bezeichnung || '— unknown —';
 
-    // Priority 0: SPERRGUT (different storage zone, not plannable in STOROJET)
+    // Filter 1c: PREFIX_EXCLUDED
+    if (hasExcludedPrefix(bez)) {
+      exclusionLog.push({
+        artikelnummer: artNr, bezeichnung: bez,
+        exclusion_reason: 'PREFIX_EXCLUDED', exclusion_phase: 'FILTER',
+        bestand: bestandVal,
+        detail: `Bezeichnung beginnt mit "${excludePrefixes.find(p => bez.startsWith(p + ' '))}"`,
+      });
+      continue;
+    }
+
+    // Filter 3: SPERRGUT
     if (art.sperrgut) {
       exclusionLog.push({
         artikelnummer: artNr, bezeichnung: bez,
@@ -153,8 +196,7 @@ export function processPhase1(
       continue;
     }
 
-    // Priority 1: HEIGHT_EXCEEDED — only exclude if ALL dimensions exceed limit
-    // (rotation may allow placement if at least one dimension ≤ hoehe_limit_mm)
+    // Filter 4: HEIGHT_EXCEEDED — only if ALL dimensions exceed limit
     if (Math.min(art.hoehe_mm, art.breite_mm, art.laenge_mm) > config.hoehe_limit_mm) {
       validation.artikel_nicht_lagerfaehig.push(artNr);
       exclusionLog.push({
@@ -165,7 +207,7 @@ export function processPhase1(
       continue;
     }
 
-    // Priority 2: WEIGHT_EXCEEDED
+    // Filter 5: WEIGHT_EXCEEDED
     if (art.gewicht_kg > config.gewicht_hard_kg) {
       exclusionLog.push({
         artikelnummer: artNr, bezeichnung: bez,
@@ -175,7 +217,7 @@ export function processPhase1(
       continue;
     }
 
-    // Priority 3: DIMENSIONS_MISSING (any dimension = 0)
+    // Filter 6: DIMENSIONS_MISSING
     if (art.hoehe_mm <= 0 || art.breite_mm <= 0 || art.laenge_mm <= 0) {
       validation.artikel_unvollstaendig.push(artNr);
       exclusionLog.push({
@@ -187,7 +229,7 @@ export function processPhase1(
       continue;
     }
 
-    // Priority 4: WEIGHT_MISSING
+    // Filter 7: WEIGHT_MISSING
     if (!art.gewicht_kg || art.gewicht_kg <= 0) {
       validation.artikel_unvollstaendig.push(artNr);
       exclusionLog.push({
@@ -198,15 +240,30 @@ export function processPhase1(
       continue;
     }
 
-    enriched.push({ art, bestandVal, umsatzGesamt: umsatzMap.get(artNr) ?? 0 });
+    // Filter 8: LOW_FREQUENCY
+    const orderMengen = orderMengenMap.get(artNr) ?? [];
+    if (orderMengen.length < minOrderCount) {
+      exclusionLog.push({
+        artikelnummer: artNr, bezeichnung: bez,
+        exclusion_reason: 'LOW_FREQUENCY', exclusion_phase: 'FILTER',
+        bestand: bestandVal,
+        detail: `${orderMengen.length} Bestellungen (min: ${minOrderCount})`,
+      });
+      continue;
+    }
+
+    enriched.push({ art, bestandVal, umsatzGesamt: umsatzMap.get(artNr) ?? 0, orderMengen });
   }
 
-  // ABC classification: sort by umsatz_gesamt descending
+  // ---- ABC classification ----
   enriched.sort((a, b) => b.umsatzGesamt - a.umsatzGesamt);
   const totalUmsatz = enriched.reduce((sum, e) => sum + e.umsatzGesamt, 0);
   let cumulativeUmsatz = 0;
 
-  const processed: ArtikelProcessed[] = enriched.map(({ art, bestandVal, umsatzGesamt }) => {
+  const bulkThreshold = config.bulk_top3_threshold ?? 0.5;
+  const refillWeeks = config.refill_weeks ?? 5;
+
+  const processed: ArtikelProcessed[] = enriched.map(({ art, bestandVal, umsatzGesamt, orderMengen }) => {
     cumulativeUmsatz += umsatzGesamt;
     const cumulativePct = totalUmsatz > 0 ? cumulativeUmsatz / totalUmsatz : 1;
     let abc_klasse: 'A' | 'B' | 'C';
@@ -214,14 +271,41 @@ export function processPhase1(
     else if (cumulativePct <= 0.5) abc_klasse = 'B';
     else abc_klasse = 'C';
 
+    const order_count = orderMengen.length;
+
+    // Bulk detection: top 3 orders cover >= threshold of total volume
+    const sortedMengen = [...orderMengen].sort((a, b) => b - a);
+    const top3Sum = sortedMengen.slice(0, 3).reduce((s, v) => s + v, 0);
+    const is_median_article = umsatzGesamt > 0 && top3Sum / umsatzGesamt >= bulkThreshold;
+
+    // Weekly demand: use median for bulk articles, mean for regular
+    let weekly_demand: number;
+    if (is_median_article) {
+      const median = sortedMengen[Math.floor(sortedMengen.length / 2)] ?? 0;
+      weekly_demand = (median * order_count) / HISTORY_WEEKS;
+    } else {
+      weekly_demand = umsatzGesamt / HISTORY_WEEKS;
+    }
+
+    // Bestandsdeckelung
+    const bestand_gesamt = bestandVal;
+    const bestand_storojet = Math.min(bestand_gesamt, Math.max(1, Math.ceil(weekly_demand * refillWeeks)));
+    const bestand_regal = bestand_gesamt - bestand_storojet;
+
     return {
       ...art,
       umsatz_gesamt: umsatzGesamt,
       abc_klasse,
-      bestand: bestandVal,
+      bestand: bestand_storojet,           // Algorithm uses the capped value
       in_abwicklung: 0,
-      platzbedarf_mm2: bestandVal * art.grundflaeche_mm2,
+      platzbedarf_mm2: bestand_storojet * art.grundflaeche_mm2,
       warnungen: [],
+      bestand_gesamt,
+      bestand_storojet,
+      bestand_regal,
+      weekly_demand,
+      order_count,
+      is_median_article,
     };
   });
 

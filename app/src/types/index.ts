@@ -40,11 +40,18 @@ export interface ArtikelProcessed extends ArtikelData {
   // grundflaeche_mm2 and max_stapelhoehe inherited from ArtikelData
   umsatz_gesamt: number;          // SUM(menge) from Bestellungen
   abc_klasse: 'A' | 'B' | 'C';
-  bestand: number;
+  bestand: number;                // = bestand_storojet — algorithm uses this value
   in_abwicklung: number;
   platzbedarf_mm2: number;        // bestand × grundflaeche_mm2
   cluster_id?: number;
   warnungen: string[];
+  // Bestandsoptimierung
+  bestand_gesamt: number;         // Original-Lagerbestand
+  bestand_storojet: number;       // Berechneter STOROJET-Bestand (= bestand nach Decklung)
+  bestand_regal: number;          // = bestand_gesamt - bestand_storojet
+  weekly_demand: number;          // Wochenverbrauch (Stk/Woche)
+  order_count: number;            // Anzahl bereinigte Bestellungen
+  is_median_article: boolean;     // true = Bulk-Erkennung, Median-Formel aktiv
 }
 
 // ============ CONFIG TYPES ============
@@ -65,6 +72,11 @@ export interface WTConfig {
   affinity_threshold: number;      // Min P(B|A) to include a pair. Default: 0.15
   affinity_min_count: number;      // Min co-occurrence count. Default: 5
   affinity_min_orders_a: number;   // Min order count for seed article. Default: 10
+  // Bestandsoptimierung
+  refill_weeks: number;            // default: 5 — Nachfüll-Intervall (UI-exposed)
+  exclude_prefixes: string[];      // default: ['VML','VMB','SAM','OEM','SON'] — hidden
+  min_order_count: number;         // default: 5 — hidden
+  bulk_top3_threshold: number;     // default: 0.50 — hidden
 }
 
 // ============ WT + OUTPUT TYPES ============
@@ -192,7 +204,9 @@ export type ExclusionReason =
   | 'WEIGHT_MISSING'
   | 'NO_MASTER_RECORD'
   | 'SON_ARTICLE'
-  | 'SEGMENT_TOO_SMALL';
+  | 'SEGMENT_TOO_SMALL'
+  | 'PREFIX_EXCLUDED'
+  | 'LOW_FREQUENCY';
 
 export interface ExclusionLogEntry {
   artikelnummer: string;

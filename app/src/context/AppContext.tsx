@@ -61,6 +61,10 @@ const DEFAULT_CONFIG: WTConfig = {
   affinity_threshold: 0.15,
   affinity_min_count: 5,
   affinity_min_orders_a: 10,
+  refill_weeks: 5,
+  exclude_prefixes: ['VML', 'VMB', 'SAM', 'OEM', 'SON'],
+  min_order_count: 5,
+  bulk_top3_threshold: 0.5,
 };
 
 const initialState: AppState = {

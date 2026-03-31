@@ -27,11 +27,14 @@ const REASON_LABELS: Record<ExclusionReason, string> = {
   NO_MASTER_RECORD: 'Kein Stammdatensatz',
   SON_ARTICLE: 'Rabatt-/Sonderartikel (SON)',
   SEGMENT_TOO_SMALL: 'Segment zu klein (min. Breite)',
+  PREFIX_EXCLUDED: 'Nicht-Picking-Artikel (VML/VMB/SAM/OEM/SON)',
+  LOW_FREQUENCY: 'Zu selten bestellt (<5 Bestellungen)',
 };
 
 const REASON_ORDER: ExclusionReason[] = [
   'SPERRGUT', 'HEIGHT_EXCEEDED', 'WEIGHT_EXCEEDED', 'DIMENSIONS_MISSING',
   'WEIGHT_MISSING', 'NO_MASTER_RECORD', 'SON_ARTICLE',
+  'PREFIX_EXCLUDED', 'LOW_FREQUENCY',
 ];
 
 export default function ABCSection() {
@@ -53,13 +56,17 @@ export default function ABCSection() {
   const stats = useMemo(() => {
     const counts = { A: 0, B: 0, C: 0 };
     let totalBestand = 0;
+    let totalBestandGesamt = 0;
+    let totalRegal = 0;
     let totalUmsatz = 0;
     for (const a of artikelProcessed) {
       counts[a.abc_klasse]++;
-      totalBestand += a.bestand;
+      totalBestand += a.bestand_storojet ?? a.bestand;
+      totalBestandGesamt += a.bestand_gesamt ?? a.bestand;
+      totalRegal += a.bestand_regal ?? 0;
       totalUmsatz += a.umsatz_gesamt;
     }
-    return { total: artikelProcessed.length, counts, totalBestand, totalUmsatz };
+    return { total: artikelProcessed.length, counts, totalBestand, totalBestandGesamt, totalRegal, totalUmsatz };
   }, [artikelProcessed]);
 
   const exclusionStats = useMemo(() => {
@@ -125,16 +132,42 @@ export default function ABCSection() {
         </span>
       ),
     }),
+    columnHelper.accessor('bestand_gesamt', {
+      header: 'Bestand',
+      cell: (info) => (info.getValue() ?? 0).toLocaleString('de-DE'),
+    }),
+    columnHelper.accessor('bestand_storojet', {
+      header: 'STOROJET',
+      cell: (info) => (
+        <span className="font-bold text-green-700">
+          {(info.getValue() ?? 0).toLocaleString('de-DE')}
+        </span>
+      ),
+    }),
+    columnHelper.accessor('bestand_regal', {
+      header: 'Regal',
+      cell: (info) => (
+        <span className="text-gray-400">
+          {(info.getValue() ?? 0).toLocaleString('de-DE')}
+        </span>
+      ),
+    }),
+    columnHelper.accessor('weekly_demand', {
+      header: 'Stk/Woche',
+      cell: (info) => (info.getValue() ?? 0).toFixed(1),
+    }),
+    columnHelper.accessor('order_count', {
+      header: 'Bestellungen',
+      cell: (info) => (info.getValue() ?? 0).toLocaleString('de-DE'),
+    }),
+    columnHelper.accessor('is_median_article', {
+      header: 'Bulk?',
+      cell: (info) => info.getValue()
+        ? <span className="px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-700">Median</span>
+        : null,
+    }),
     columnHelper.accessor('umsatz_gesamt', {
       header: 'Umsatz (Stk)',
-      cell: (info) => info.getValue().toLocaleString('de-DE'),
-    }),
-    columnHelper.accessor('bestand', {
-      header: 'Bestand',
-      cell: (info) => info.getValue().toLocaleString('de-DE'),
-    }),
-    columnHelper.accessor('grundflaeche_mm2', {
-      header: 'Grundfläche (mm²)',
       cell: (info) => info.getValue().toLocaleString('de-DE'),
     }),
   ], [columnHelper]);
@@ -215,10 +248,14 @@ export default function ABCSection() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="Artikel gesamt" value={stats.total}
           sub={`A: ${stats.counts.A} | B: ${stats.counts.B} | C: ${stats.counts.C}`} />
-        <KpiCard label="Gesamtbestand" value={stats.totalBestand.toLocaleString('de-DE')} />
-        <KpiCard label="Gesamtumsatz (Stk)" value={stats.totalUmsatz.toLocaleString('de-DE')} />
-        <KpiCard label="Ø Umsatz/Artikel"
-          value={stats.total > 0 ? Math.round(stats.totalUmsatz / stats.total).toLocaleString('de-DE') : '0'} />
+        <KpiCard label="STOROJET-Bestand" value={stats.totalBestand.toLocaleString('de-DE')}
+          sub={stats.totalBestandGesamt > 0
+            ? `${((stats.totalBestand / stats.totalBestandGesamt) * 100).toFixed(0)}% vom Gesamt-Lagerbestand`
+            : undefined} />
+        <KpiCard label="Regal-Bestand" value={stats.totalRegal.toLocaleString('de-DE')}
+          sub="Nachschub-Reserve" />
+        <KpiCard label="Gesamtumsatz (Stk)" value={stats.totalUmsatz.toLocaleString('de-DE')}
+          sub={stats.total > 0 ? `Ø ${Math.round(stats.totalUmsatz / stats.total).toLocaleString('de-DE')} / Artikel` : undefined} />
       </div>
 
       {/* Exclusion KPI Cards */}
