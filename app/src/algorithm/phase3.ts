@@ -347,8 +347,13 @@ function addArticleToWT(
   const wtDepth = getWTDepth(wt.typ);
   const maxR = getMaxRows(wt.typ, wt.mode);
 
-  // Required depth for the new article
-  let seg = requiredDepthSegment(art, zoneWidth, config.gewicht_hard_kg);
+  // Required depth based on per-zone stock (not total art.bestand)
+  const maxCapInFullZone = Math.max(1, zoneCapacity(art, zoneWidth, wtDepth, config.griff_puffer_mm));
+  const stockForThisZone = Math.min(remainingStk, maxCapInFullZone);
+  let seg = requiredDepthForStock(
+    art.hoehe_mm, art.breite_mm, art.laenge_mm, art.gewicht_kg,
+    stockForThisZone, zoneWidth, config.gewicht_hard_kg,
+  );
   if (seg === null) {
     // Article needs full zone — take all remaining depth
     const usedNow = wt.zone_depths_mm.reduce((s, d) => s + d, 0);
@@ -473,7 +478,21 @@ function tryMovePositionToWT(
   }
 
   // Remove from source
+  const rowIdx = pos.row_index;
   srcWT.positionen.splice(srcWT.positionen.indexOf(pos), 1);
+
+  // Clean up ghost zone_depths_mm entry if the row is now empty
+  const rowStillOccupied = srcWT.positionen.some(p => p.row_index === rowIdx);
+  if (!rowStillOccupied) {
+    srcWT.zone_depths_mm.splice(rowIdx, 1);
+    for (const p of srcWT.positionen) {
+      if (p.row_index > rowIdx) {
+        p.row_index--;
+        p.zone_index = p.row_index * (srcWT.mode === 'B' ? 2 : 1) + p.col_index;
+      }
+    }
+  }
+
   updateWTMetrics(srcWT, config);
   return true;
 }
@@ -498,6 +517,7 @@ function buildClusters(
 ): Cluster[] {
   const clusters: Cluster[] = [];
   const assigned = new Set<string>(); // artNr → seeded into a cluster
+  const hubSet = new Set<string>();   // artNr → used as hub seed (must not join partner clusters)
 
   // Sort by partner count desc, then umsatz desc
   const sortedByPartners = [...processed]
@@ -536,6 +556,7 @@ function buildClusters(
       clusters.push({ id: clusters.length, members });
     }
     assigned.add(artNr);
+    hubSet.add(artNr);
   }
 
   // Step 1b: Affinity Groups (non-hubs)
@@ -550,6 +571,7 @@ function buildClusters(
     for (const { partner } of [...partners].sort((x, y) => y.affinity - x.affinity)) {
       if (members.length >= 6) break;
       if (assigned.has(partner)) continue;
+      if (hubSet.has(partner)) continue;
       const pArt = artDataMap.get(partner);
       if (pArt && pArt.bestand > 0) {
         members.push(partner);
@@ -593,8 +615,20 @@ function packCluster(
     .sort((a, b) => {
       const zwA = getZoneWidth(articleFitsMode(a.art) === 'BOTH' ? 'B' : 'A');
       const zwB = getZoneWidth(articleFitsMode(b.art) === 'BOTH' ? 'B' : 'A');
-      const segA = requiredDepthSegment(a.art, zwA, config.gewicht_hard_kg) ?? 800;
-      const segB = requiredDepthSegment(b.art, zwB, config.gewicht_hard_kg) ?? 800;
+      const depA = getWTDepth(wtTypePlan.get(a.artNr) ?? 'KLEIN');
+      const depB = getWTDepth(wtTypePlan.get(b.artNr) ?? 'KLEIN');
+      const stkA = remainingStock.get(a.artNr) ?? 0;
+      const stkB = remainingStock.get(b.artNr) ?? 0;
+      const capA = Math.max(1, zoneCapacity(a.art, zwA, depA, config.griff_puffer_mm));
+      const capB = Math.max(1, zoneCapacity(b.art, zwB, depB, config.griff_puffer_mm));
+      const segA = requiredDepthForStock(
+        a.art.hoehe_mm, a.art.breite_mm, a.art.laenge_mm, a.art.gewicht_kg,
+        Math.min(stkA, capA), zwA, config.gewicht_hard_kg,
+      ) ?? 800;
+      const segB = requiredDepthForStock(
+        b.art.hoehe_mm, b.art.breite_mm, b.art.laenge_mm, b.art.gewicht_kg,
+        Math.min(stkB, capB), zwB, config.gewicht_hard_kg,
+      ) ?? 800;
       return segB - segA; // DESC
     });
 
