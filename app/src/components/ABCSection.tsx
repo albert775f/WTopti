@@ -32,13 +32,13 @@ const REASON_LABELS: Record<ExclusionReason, string> = {
 };
 
 const REASON_ORDER: ExclusionReason[] = [
+  'PREFIX_EXCLUDED', 'LOW_FREQUENCY',
   'SPERRGUT', 'HEIGHT_EXCEEDED', 'WEIGHT_EXCEEDED', 'DIMENSIONS_MISSING',
   'WEIGHT_MISSING', 'NO_MASTER_RECORD', 'SON_ARTICLE',
-  'PREFIX_EXCLUDED', 'LOW_FREQUENCY',
 ];
 
 export default function ABCSection() {
-  const { artikelProcessed, result } = useAppState();
+  const { artikelProcessed, result, config } = useAppState();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [abcFilter, setAbcFilter] = useState<string>('all');
@@ -68,6 +68,11 @@ export default function ABCSection() {
     }
     return { total: artikelProcessed.length, counts, totalBestand, totalBestandGesamt, totalRegal, totalUmsatz };
   }, [artikelProcessed]);
+
+  const medianCount = useMemo(
+    () => artikelProcessed.filter(a => a.is_median_article).length,
+    [artikelProcessed],
+  );
 
   const exclusionStats = useMemo(() => {
     const totalArticles = artikelProcessed.length + exclusionLog.filter(e => e.bestand > 0).length;
@@ -119,6 +124,13 @@ export default function ABCSection() {
     };
   }, [artikelProcessed]);
 
+  const STOCK_COLORS: Record<string, string> = { STOROJET: '#22c55e', Shelf: '#60a5fa', Excluded: '#9ca3af' };
+  const stockPieData = useMemo(() => [
+    { name: 'STOROJET', value: stats.totalBestand },
+    { name: 'Shelf', value: stats.totalRegal },
+    { name: 'Excluded', value: exclusionStats.excludedBestand },
+  ], [stats, exclusionStats]);
+
   const columnHelper = createColumnHelper<ArtikelProcessed>();
   const columns = useMemo(() => [
     columnHelper.accessor('artikelnummer', { header: 'Artikelnr.' }),
@@ -132,38 +144,34 @@ export default function ABCSection() {
         </span>
       ),
     }),
-    columnHelper.accessor('bestand_gesamt', {
-      header: 'Bestand',
+    columnHelper.accessor('order_count', {
+      header: 'Orders',
       cell: (info) => (info.getValue() ?? 0).toLocaleString('de-DE'),
     }),
-    columnHelper.accessor('bestand_storojet', {
+    columnHelper.accessor('weekly_demand', {
+      header: 'Units/Wk',
+      cell: (info) => (info.getValue() ?? 0).toFixed(1),
+    }),
+    columnHelper.accessor('bestand_gesamt', {
+      header: 'Stock (Warehouse)',
+      cell: (info) => (info.getValue() ?? 0).toLocaleString('de-DE'),
+    }),
+    columnHelper.accessor('bestand', {
       header: 'STOROJET',
       cell: (info) => (
-        <span className="font-bold text-green-700">
-          {(info.getValue() ?? 0).toLocaleString('de-DE')}
+        <span className="font-semibold text-green-700">
+          {info.getValue().toLocaleString('de-DE')}
         </span>
       ),
     }),
     columnHelper.accessor('bestand_regal', {
-      header: 'Regal',
-      cell: (info) => (
-        <span className="text-gray-400">
-          {(info.getValue() ?? 0).toLocaleString('de-DE')}
-        </span>
-      ),
-    }),
-    columnHelper.accessor('weekly_demand', {
-      header: 'Stk/Woche',
-      cell: (info) => (info.getValue() ?? 0).toFixed(1),
-    }),
-    columnHelper.accessor('order_count', {
-      header: 'Bestellungen',
-      cell: (info) => (info.getValue() ?? 0).toLocaleString('de-DE'),
+      header: 'Shelf',
+      cell: (info) => (info.getValue() ?? 0) > 0 ? (info.getValue() ?? 0).toLocaleString('de-DE') : '—',
     }),
     columnHelper.accessor('is_median_article', {
-      header: 'Bulk?',
+      header: 'Median',
       cell: (info) => info.getValue()
-        ? <span className="px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-700">Median</span>
+        ? <span className="px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-700">Bulk</span>
         : null,
     }),
     columnHelper.accessor('umsatz_gesamt', {
@@ -244,18 +252,26 @@ export default function ABCSection() {
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-gray-800">ABC-Analyse</h2>
 
-      {/* KPI Cards */}
+      {/* KPI Cards — Row 1 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="Artikel gesamt" value={stats.total}
           sub={`A: ${stats.counts.A} | B: ${stats.counts.B} | C: ${stats.counts.C}`} />
-        <KpiCard label="STOROJET-Bestand" value={stats.totalBestand.toLocaleString('de-DE')}
+        <KpiCard label="STOROJET Stock" value={stats.totalBestand.toLocaleString('de-DE')}
           sub={stats.totalBestandGesamt > 0
-            ? `${((stats.totalBestand / stats.totalBestandGesamt) * 100).toFixed(0)}% vom Gesamt-Lagerbestand`
-            : undefined} />
-        <KpiCard label="Regal-Bestand" value={stats.totalRegal.toLocaleString('de-DE')}
-          sub="Nachschub-Reserve" />
+            ? `${((stats.totalBestand / stats.totalBestandGesamt) * 100).toFixed(0)}% of warehouse stock`
+            : undefined}
+          variant="success" />
+        <KpiCard label="Shelf Reserve" value={stats.totalRegal.toLocaleString('de-DE')}
+          sub="Conventional replenishment" />
         <KpiCard label="Gesamtumsatz (Stk)" value={stats.totalUmsatz.toLocaleString('de-DE')}
           sub={stats.total > 0 ? `Ø ${Math.round(stats.totalUmsatz / stats.total).toLocaleString('de-DE')} / Artikel` : undefined} />
+      </div>
+
+      {/* KPI Cards — Row 2 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <KpiCard label="Replenishment Interval" value={`${config.refill_weeks} weeks`} />
+        <KpiCard label="Bulk-Corrected" value={medianCount}
+          sub="Articles using median formula" />
       </div>
 
       {/* Exclusion KPI Cards */}
@@ -398,25 +414,53 @@ export default function ABCSection() {
 
       {/* Pie Charts */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {(['count', 'bestand', 'umsatz'] as const).map((key) => (
-          <div key={key} className="bg-white rounded-lg border border-gray-200 p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-2 capitalize">
-              {key === 'count' ? 'Artikelanzahl' : key === 'bestand' ? 'Bestand' : 'Umsatz'}
-            </h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={pieData[key]} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                  outerRadius={70} label={({ name, percent }) => `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`}>
-                  {pieData[key].map((entry, i) => (
-                    <Cell key={i} fill={ABC_COLORS[entry.name]} />
-                  ))}
-                </Pie>
-                <Legend />
-                <Tooltip formatter={(v) => Number(v).toLocaleString('de-DE')} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        ))}
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Artikelanzahl</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={pieData.count} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                outerRadius={70} label={({ name, percent }) => `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`}>
+                {pieData.count.map((entry, i) => (
+                  <Cell key={i} fill={ABC_COLORS[entry.name]} />
+                ))}
+              </Pie>
+              <Legend />
+              <Tooltip formatter={(v) => Number(v).toLocaleString('de-DE')} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Stock Distribution</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={stockPieData} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                outerRadius={70} label={({ name, percent }) => `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`}>
+                {stockPieData.map((entry) => (
+                  <Cell key={entry.name} fill={STOCK_COLORS[entry.name]} />
+                ))}
+              </Pie>
+              <Legend />
+              <Tooltip formatter={(v) => Number(v).toLocaleString('de-DE')} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Umsatz</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={pieData.umsatz} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                outerRadius={70} label={({ name, percent }) => `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`}>
+                {pieData.umsatz.map((entry, i) => (
+                  <Cell key={i} fill={ABC_COLORS[entry.name]} />
+                ))}
+              </Pie>
+              <Legend />
+              <Tooltip formatter={(v) => Number(v).toLocaleString('de-DE')} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       {/* Table */}
@@ -493,10 +537,14 @@ export default function ABCSection() {
 }
 
 function KpiCard({ label, value, sub, variant }: {
-  label: string; value: string | number; sub?: string; variant?: 'warning';
+  label: string; value: string | number; sub?: string; variant?: 'warning' | 'success';
 }) {
-  const border = variant === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white';
-  const valueColor = variant === 'warning' ? 'text-amber-700' : 'text-gray-800';
+  const border = variant === 'warning' ? 'border-amber-200 bg-amber-50'
+    : variant === 'success' ? 'border-green-200 bg-green-50'
+    : 'border-gray-200 bg-white';
+  const valueColor = variant === 'warning' ? 'text-amber-700'
+    : variant === 'success' ? 'text-green-700'
+    : 'text-gray-800';
   return (
     <div className={`rounded-lg border p-4 ${border}`}>
       <p className="text-xs text-gray-500 uppercase tracking-wide">{label}</p>

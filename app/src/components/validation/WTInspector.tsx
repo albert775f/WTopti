@@ -48,17 +48,14 @@ export default function WTInspector({ wts, initialWTId }: Props) {
 
   const layoutRects = useMemo(() => {
     if (!wt) return [];
-    const { grid_cols, zone_w_mm, zone_d_mm } = wt;
+    const zoneDepths = wt.zone_depths_mm ?? [];
+    const wtMode = wt.mode ?? 'A';
+    const zoneWidth = wtMode === 'B' ? 250 : 500;
     return wt.positionen.map(pos => {
-      const col = pos.zone_index % grid_cols;
-      const row = Math.floor(pos.zone_index / grid_cols);
-      return {
-        x: col * (zone_w_mm + 5),
-        y: row * (zone_d_mm + 5),
-        w: zone_w_mm,
-        h: zone_d_mm,
-        pos,
-      };
+      const depth = zoneDepths[pos.row_index] ?? 0;
+      const yOffset = zoneDepths.slice(0, pos.row_index).reduce((s, d) => s + d + 5, 0);
+      const xOffset = pos.col_index * zoneWidth;
+      return { x: xOffset, y: yOffset, w: zoneWidth, h: depth, pos };
     });
   }, [wt]);
 

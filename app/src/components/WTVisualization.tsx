@@ -107,43 +107,62 @@ export default function WTVisualization() {
   const isKlein = wt!.typ === 'KLEIN';
   const wtD_mm = isKlein ? 500 : 800;
   const svgW = 250;
-  const svgH = isKlein ? 250 : 400;
   const scale = svgW / 500;
+
+  // Compute SVG height from actual zone depths + dividers
+  const totalDepthMm = wt
+    ? (wt.zone_depths_mm ?? []).reduce((s, d) => s + d, 0) +
+      Math.max(0, (wt.zone_depths_mm?.length ?? 0) - 1) * DIVIDER_MM
+    : (isKlein ? 500 : 800);
+  const svgH = Math.max(1, Math.ceil(totalDepthMm * scale));
 
   const { stackRects, zoneBgs } = useMemo(() => {
     if (!wt) return { stackRects: [] as StackRect[], zoneBgs: [] as ZoneBg[] };
-    const { grid_cols, grid_rows, zone_w_mm, zone_d_mm } = wt;
-    const zoneMap = new Map(wt.positionen.map(p => [p.zone_index, p]));
+
+    const zoneDepths = wt.zone_depths_mm ?? [];
+    const wtMode = wt.mode ?? 'A';
+    const numCols = wtMode === 'B' ? 2 : 1;
+    const zoneWidth = wtMode === 'B' ? 250 : 500; // mm per column
+
+    // Build position lookup by (row, col)
+    const posMap = new Map<string, WTPosition>();
+    for (const pos of wt.positionen) {
+      posMap.set(`${pos.row_index}:${pos.col_index}`, pos);
+    }
+
     const stacks: StackRect[] = [];
     const bgs: ZoneBg[] = [];
+    let yOffset = 0;
 
-    for (let row = 0; row < grid_rows; row++) {
-      for (let col = 0; col < grid_cols; col++) {
-        const idx = row * grid_cols + col;
-        const zoneX = col * (zone_w_mm + DIVIDER_MM);
-        const zoneY = row * (zone_d_mm + DIVIDER_MM);
-        const pos = zoneMap.get(idx) ?? null;
+    for (let rowIdx = 0; rowIdx < zoneDepths.length; rowIdx++) {
+      const depth = zoneDepths[rowIdx];
 
-        bgs.push({ x: zoneX, y: zoneY, w: zone_w_mm, h: zone_d_mm, empty: !pos });
+      for (let colIdx = 0; colIdx < numCols; colIdx++) {
+        // Mode A: col 0 at x=0. Mode B: col 0 at x=0, col 1 at x=zoneWidth (no gap).
+        const zoneX = colIdx * zoneWidth;
+        const zoneY = yOffset;
+        const pos = posMap.get(`${rowIdx}:${colIdx}`) ?? null;
+
+        bgs.push({ x: zoneX, y: zoneY, w: zoneWidth, h: depth, empty: !pos });
         if (!pos) continue;
 
         const layout = bestStackLayout(
           pos.hoehe_mm, pos.breite_mm, pos.laenge_mm,
-          zone_w_mm, zone_d_mm, pos.stueckzahl,
+          zoneWidth, depth, pos.stueckzahl,
         );
 
         const compact = !layout || layout.totalStacks > COMPACT_THRESHOLD;
         const safeLayout: StackLayout = layout ?? {
-          fp1: zone_w_mm, fp2: zone_d_mm, maxStapel: 1,
+          fp1: zoneWidth, fp2: depth, maxStapel: 1,
           gridCols: 1, gridRows: 1, totalStacks: pos.stueckzahl,
         };
 
         if (compact) {
           stacks.push({
-            x: zoneX, y: zoneY, w: zone_w_mm, h: zone_d_mm,
+            x: zoneX, y: zoneY, w: zoneWidth, h: depth,
             pos, stackIndex: -1, stackItems: pos.stueckzahl,
             totalStacks: safeLayout.totalStacks,
-            compact: true, layout: safeLayout, zoneW: zone_w_mm, zoneD: zone_d_mm,
+            compact: true, layout: safeLayout, zoneW: zoneWidth, zoneD: depth,
           });
         } else {
           let remaining = pos.stueckzahl;
@@ -159,13 +178,16 @@ export default function WTVisualization() {
                 stackIndex: r * safeLayout.gridCols + c,
                 stackItems,
                 totalStacks: safeLayout.totalStacks,
-                compact: false, layout: safeLayout, zoneW: zone_w_mm, zoneD: zone_d_mm,
+                compact: false, layout: safeLayout, zoneW: zoneWidth, zoneD: depth,
               });
             }
           }
         }
       }
+
+      yOffset += depth + DIVIDER_MM;
     }
+
     return { stackRects: stacks, zoneBgs: bgs };
   }, [wt]);
 
@@ -213,12 +235,15 @@ export default function WTVisualization() {
             className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Suche</button>
           <button
             onClick={() => {
-              const headers = ['WT-ID', 'Typ', 'Artikel', 'Bezeichnung', 'Stück', 'Gewicht (kg)', 'Fläche %', 'Cluster', 'ABC', 'Teiler'];
+              const headers = ['WT-ID', 'Typ', 'Mode', 'Artikel', 'Bezeichnung', 'Stück', 'Gewicht (kg)', 'Fläche %', 'Cluster', 'ABC', 'Teiler', 'Row', 'Column', 'Zone Depth (mm)'];
               const rows = wts.flatMap(w =>
                 w.positionen.map(pos => [
-                  w.id, w.typ, pos.artikelnummer, pos.bezeichnung,
+                  w.id, w.typ, w.mode ?? 'A',
+                  pos.artikelnummer, pos.bezeichnung,
                   pos.stueckzahl, w.gesamtgewicht_kg, w.flaeche_netto_pct,
                   w.cluster_id, pos.abc_klasse, w.anzahl_teiler,
+                  pos.row_index, pos.col_index,
+                  (w.zone_depths_mm ?? [])[pos.row_index] ?? '',
                 ])
               );
               const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
@@ -235,11 +260,11 @@ export default function WTVisualization() {
       {/* SVG + metrics */}
       {wt && (
         <div className="bg-white border border-gray-200 rounded-lg p-4 relative">
-          <div className="flex gap-4 text-xs text-gray-500 mb-2">
+          <div className="flex gap-4 text-xs text-gray-500 mb-2 flex-wrap">
             <span>Typ: <strong>{wt.typ}</strong></span>
+            <span>Mode: <strong>{wt.mode ?? 'A'}</strong></span>
             <span>Gewicht: <strong>{wt.gesamtgewicht_kg.toFixed(1)} kg</strong></span>
             <span>Zonen: <strong>{wt.positionen.length}/{wt.zone_count}</strong></span>
-            <span>Grid: <strong>{wt.grid_cols}×{wt.grid_rows}</strong></span>
             <span>Teiler: <strong>{wt.anzahl_teiler}</strong></span>
             <span>Cluster: <strong>{wt.cluster_id}</strong></span>
           </div>

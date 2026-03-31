@@ -36,7 +36,7 @@ export function calculateBaseline(
       const grid_rows = 1;
 
       wts.push({
-        id, typ: 'KLEIN', cluster_id: 0,
+        id, typ: 'KLEIN', mode: 'A', cluster_id: 0,
         positionen: [{
           artikelnummer: String(art.artikelnummer),
           bezeichnung: art.bezeichnung,
@@ -49,6 +49,8 @@ export function calculateBaseline(
           laenge_mm: art.laenge_mm,
           max_stapelhoehe: art.max_stapelhoehe,
           zone_index: 0,
+          row_index: 0,
+          col_index: 0,
         }],
         gesamtgewicht_kg: Math.round(art.gewicht_kg * place * 100) / 100,
         flaeche_brutto_mm2: KLEIN_AREA,
@@ -60,6 +62,7 @@ export function calculateBaseline(
         zone_count: 1,
         zone_w_mm: 500,
         zone_d_mm: 500,
+        zone_depths_mm: [500],
       });
       remaining -= place;
     }

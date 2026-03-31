@@ -95,23 +95,27 @@ export interface WTPosition {
   laenge_mm: number;       // footprint dimension
   max_stapelhoehe: number; // floor(320/hoehe_mm)
   zone_index: number;      // 0-based zone index on this WT
+  row_index: number;       // depth row (0-based)
+  col_index: number;       // column: 0 = left/full, 1 = right (Mode B only)
 }
 
 export interface WT {
   id: string;                     // z.B. "K-0001", "G-0001"
   typ: WTTyp;
+  mode: 'A' | 'B';               // A = full 500mm width, B = 2×250mm columns
   positionen: WTPosition[];
   cluster_id: number;
   gesamtgewicht_kg: number;
   flaeche_brutto_mm2: number;     // 250000 (K) oder 400000 (G)
   flaeche_netto_pct: number;      // % of zones occupied (positionen.length / zone_count * 100)
-  anzahl_teiler: number;          // (cols-1) + (rows-1)
+  anzahl_teiler: number;          // (rows-1) cross dividers + 1 longitudinal (Mode B)
   gewicht_status: 'ok' | 'soft_warn' | 'hard_fail';
-  grid_cols: number;              // grid columns
-  grid_rows: number;              // grid rows
-  zone_count: number;             // grid_cols * grid_rows
-  zone_w_mm: number;              // uniform zone width
-  zone_d_mm: number;              // uniform zone depth
+  grid_cols: number;              // 1 (Mode A) or 2 (Mode B)
+  grid_rows: number;              // number of depth rows
+  zone_count: number;             // grid_rows * grid_cols
+  zone_w_mm: number;              // 500 (Mode A) or 250 (Mode B)
+  zone_depths_mm: number[];       // depth per row, e.g. [100, 200, 200]
+  zone_d_mm: number;              // DEPRECATED — avg row depth, kept for backward compat (C7 check)
 }
 
 // ============ AFFINITY TYPES (Phase 2) ============
