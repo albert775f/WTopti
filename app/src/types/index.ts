@@ -79,6 +79,8 @@ export interface WTConfig {
   exclude_prefixes: string[];      // default: ['VML','VMB','SAM','OEM','SON'] — hidden
   min_order_count: number;         // default: 5 — hidden
   bulk_top3_threshold: number;     // default: 0.50 — hidden
+  stock_multiplier: number;        // default: 1.0 — multiplier on peak-month storojet qty
+  min_active_months: number;       // default: 3 — exclude articles active in fewer distinct months
 }
 
 // ============ WT + OUTPUT TYPES ============
@@ -162,7 +164,8 @@ export type ExclusionReason =
   | 'SON_ARTICLE'
   | 'SEGMENT_TOO_SMALL'
   | 'PREFIX_EXCLUDED'
-  | 'LOW_FREQUENCY';
+  | 'LOW_FREQUENCY'
+  | 'LOW_ACTIVE_MONTHS';
 
 export interface ExclusionLogEntry {
   artikelnummer: string;

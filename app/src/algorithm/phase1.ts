@@ -25,7 +25,8 @@ const HISTORY_WEEKS_FALLBACK = 52;
  *   Filter 6:  DIMENSIONS_MISSING
  *   Filter 7:  WEIGHT_MISSING
  *   Filter 8:  order_count < min_order_count → LOW_FREQUENCY
- *   Post-ABC:  Bestandsdeckelung → bestand_storojet = peak month menge (median for bulk), capped by bestand_gesamt
+ *   Filter 8b: active_months < min_active_months → LOW_ACTIVE_MONTHS
+ *   Post-ABC:  Bestandsdeckelung → bestand_storojet = peak month menge × stock_multiplier (median for bulk), capped by bestand_gesamt
  *
  * Returns filteredBestellungen (SON + prefix free) for use in Phase 2.
  */
@@ -293,6 +294,19 @@ export function processPhase1(
       continue;
     }
 
+    // Filter 8b: LOW_ACTIVE_MONTHS
+    const minActiveMonths = config.min_active_months ?? 3;
+    const activeMonths = monthlyMengeMap.get(artNr)?.size ?? 0;
+    if (activeMonths < minActiveMonths) {
+      exclusionLog.push({
+        artikelnummer: artNr, bezeichnung: bez,
+        exclusion_reason: 'LOW_ACTIVE_MONTHS', exclusion_phase: 'FILTER',
+        bestand: bestandVal,
+        detail: `${activeMonths} aktive Monate (min: ${minActiveMonths})`,
+      });
+      continue;
+    }
+
     enriched.push({ art, bestandVal, umsatzGesamt: umsatzMap.get(artNr) ?? 0, orderMengen });
   }
 
@@ -341,8 +355,9 @@ export function processPhase1(
       storojet_qty = sortedMonthly[sortedMonthly.length - 1]; // peak month
     }
 
+    const stockMultiplier = config.stock_multiplier ?? 1.0;
     const bestand_gesamt = bestandVal;
-    const bestand_storojet = Math.min(bestand_gesamt, Math.max(1, Math.ceil(storojet_qty)));
+    const bestand_storojet = Math.min(bestand_gesamt, Math.max(1, Math.ceil(storojet_qty * stockMultiplier)));
     const bestand_regal = bestand_gesamt - bestand_storojet;
 
     return {

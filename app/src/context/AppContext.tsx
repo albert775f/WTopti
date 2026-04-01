@@ -65,6 +65,8 @@ const DEFAULT_CONFIG: WTConfig = {
   exclude_prefixes: ['VML', 'VMB', 'SAM', 'OEM', 'SON'],
   min_order_count: 5,
   bulk_top3_threshold: 0.5,
+  stock_multiplier: 1.0,
+  min_active_months: 3,
 };
 
 const initialState: AppState = {

@@ -89,7 +89,7 @@ function ConfigPanel() {
       <h3 className="text-sm font-semibold text-gray-700">Konfiguration</h3>
 
       {/* Editable params */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <label className="block">
           <span className="text-xs font-medium text-gray-700">Griffpuffer (mm)</span>
           <input
@@ -109,6 +109,16 @@ function ConfigPanel() {
             className="mt-1 block w-full rounded border border-gray-300 px-2 py-1 text-sm"
           />
           <span className="text-xs text-gray-400">Materialbreite des Zonenteilers — reduziert nutzbare Fachtiefe</span>
+        </label>
+        <label className="block">
+          <span className="text-xs font-medium text-gray-700">Lagerbestand-Multiplikator</span>
+          <input
+            type="number" min={0.1} max={5} step={0.1}
+            value={config.stock_multiplier ?? 1.0}
+            onChange={(e) => update({ stock_multiplier: Math.max(0.1, +e.target.value) })}
+            className="mt-1 block w-full rounded border border-gray-300 px-2 py-1 text-sm"
+          />
+          <span className="text-xs text-gray-400">1.0 = ein Spitzenmonat, 1.5 = 50% Puffer</span>
         </label>
       </div>
 
@@ -145,6 +155,11 @@ function ConfigPanel() {
             label="Min. Bestellungen Seed"
             value={`${config.affinity_min_orders_a}`}
             note="Seed-Artikel muss mind. so oft bestellt worden sein"
+          />
+          <ReadOnlyRow
+            label="Min. aktive Monate"
+            value={`${config.min_active_months ?? 3}`}
+            note="Artikel mit Käufen in weniger Monaten werden ausgeschlossen"
           />
           <ReadOnlyRow
             label="Min. Co-Occurrence"
