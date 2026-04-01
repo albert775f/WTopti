@@ -22,6 +22,7 @@ export interface BestellungData {
   artikelnummer: string;
   menge: number;
   belegnummer: string;
+  datum?: string;       // "YYYY-MM-DD" — used for monthly peak/median storojet calc
   bezeichnung?: string; // optional — used for SON article detection if server sends it
 }
 
@@ -73,7 +74,8 @@ export interface WTConfig {
   affinity_min_count: number;      // Min co-occurrence count. Default: 5
   affinity_min_orders_a: number;   // Min order count for seed article. Default: 10
   // Bestandsoptimierung
-  refill_weeks: number;            // default: 5 — Nachfüll-Intervall (UI-exposed)
+  /** @deprecated No longer used by Phase 1. bestand_storojet is now derived from peak/median monthly demand. */
+  refill_weeks: number;            // kept for backwards compat; ignored by algorithm
   exclude_prefixes: string[];      // default: ['VML','VMB','SAM','OEM','SON'] — hidden
   min_order_count: number;         // default: 5 — hidden
   bulk_top3_threshold: number;     // default: 0.50 — hidden

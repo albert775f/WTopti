@@ -8,11 +8,8 @@ import type {
   ExclusionLogEntry,
 } from '../types';
 
-/**
- * Assumed order history window in weeks (1 year).
- * Used to derive weekly_demand from total ordered quantity.
- */
-const HISTORY_WEEKS = 52;
+/** Fallback history window (weeks) when Bestellungen contain no parseable dates. */
+const HISTORY_WEEKS_FALLBACK = 52;
 
 /**
  * Phase 1: Data preparation + ABC classification.
@@ -28,7 +25,7 @@ const HISTORY_WEEKS = 52;
  *   Filter 6:  DIMENSIONS_MISSING
  *   Filter 7:  WEIGHT_MISSING
  *   Filter 8:  order_count < min_order_count → LOW_FREQUENCY
- *   Post-ABC:  Bestandsdeckelung → bestand_storojet = min(gesamt, ceil(weekly_demand × refill_weeks))
+ *   Post-ABC:  Bestandsdeckelung → bestand_storojet = peak month menge (median for bulk), capped by bestand_gesamt
  *
  * Returns filteredBestellungen (SON + prefix free) for use in Phase 2.
  */
@@ -120,6 +117,27 @@ export function processPhase1(
     umsatzMap.set(artNr, mengen.reduce((s, v) => s + v, 0));
     orderMengenMap.set(artNr, mengen);
   }
+
+  // ---- Build monthly menge map: artNr → Map<YYYY-MM, totalMenge> ----
+  const monthlyMengeMap = new Map<string, Map<string, number>>();
+  let minDateMs = Infinity;
+  let maxDateMs = -Infinity;
+  for (const b of filteredBestellungen) {
+    if (!b.datum) continue;
+    const artNr = String(b.artikelnummer);
+    const yearMonth = b.datum.slice(0, 7); // "YYYY-MM"
+    if (!monthlyMengeMap.has(artNr)) monthlyMengeMap.set(artNr, new Map());
+    const monthly = monthlyMengeMap.get(artNr)!;
+    monthly.set(yearMonth, (monthly.get(yearMonth) ?? 0) + b.menge);
+    const t = new Date(b.datum).getTime();
+    if (t < minDateMs) minDateMs = t;
+    if (t > maxDateMs) maxDateMs = t;
+  }
+
+  // Derive actual history window in weeks from real date range (display-only for weekly_demand)
+  const historyWeeks = (maxDateMs > minDateMs)
+    ? Math.max(1, Math.round((maxDateMs - minDateMs) / (7 * 24 * 60 * 60 * 1000)))
+    : HISTORY_WEEKS_FALLBACK;
 
   // Detect order article numbers not in Artikelliste
   const artikelSet = new Set(artikel.map(a => String(a.artikelnummer)));
@@ -284,8 +302,6 @@ export function processPhase1(
   let cumulativeUmsatz = 0;
 
   const bulkThreshold = config.bulk_top3_threshold ?? 0.5;
-  const refillWeeks = config.refill_weeks ?? 5;
-
   const processed: ArtikelProcessed[] = enriched.map(({ art, bestandVal, umsatzGesamt, orderMengen }) => {
     cumulativeUmsatz += umsatzGesamt;
     const cumulativePct = totalUmsatz > 0 ? cumulativeUmsatz / totalUmsatz : 1;
@@ -295,24 +311,38 @@ export function processPhase1(
     else abc_klasse = 'C';
 
     const order_count = orderMengen.length;
+    const artNr = String(art.artikelnummer);
 
     // Bulk detection: top 3 orders cover >= threshold of total volume
     const sortedMengen = [...orderMengen].sort((a, b) => b - a);
     const top3Sum = sortedMengen.slice(0, 3).reduce((s, v) => s + v, 0);
     const is_median_article = umsatzGesamt > 0 && top3Sum / umsatzGesamt >= bulkThreshold;
 
-    // Weekly demand: use median for bulk articles, mean for regular
+    // Weekly demand (display only): use median-adjusted rate for bulk, mean for regular
     let weekly_demand: number;
     if (is_median_article) {
       const median = sortedMengen[Math.floor(sortedMengen.length / 2)] ?? 0;
-      weekly_demand = (median * order_count) / HISTORY_WEEKS;
+      weekly_demand = (median * order_count) / historyWeeks;
     } else {
-      weekly_demand = umsatzGesamt / HISTORY_WEEKS;
+      weekly_demand = umsatzGesamt / historyWeeks;
     }
 
-    // Bestandsdeckelung
+    // bestand_storojet = peak single-month menge (or median month for bulk articles),
+    // capped by bestand_gesamt, floored at 1.
+    const monthlyTotals = [...(monthlyMengeMap.get(artNr)?.values() ?? [])];
+    const sortedMonthly = [...monthlyTotals].sort((a, b) => a - b);
+    let storojet_qty: number;
+    if (sortedMonthly.length === 0) {
+      // No date data — fall back to total demand
+      storojet_qty = umsatzGesamt;
+    } else if (is_median_article) {
+      storojet_qty = sortedMonthly[Math.floor(sortedMonthly.length / 2)] ?? umsatzGesamt;
+    } else {
+      storojet_qty = sortedMonthly[sortedMonthly.length - 1]; // peak month
+    }
+
     const bestand_gesamt = bestandVal;
-    const bestand_storojet = Math.min(bestand_gesamt, Math.max(1, Math.ceil(weekly_demand * refillWeeks)));
+    const bestand_storojet = Math.min(bestand_gesamt, Math.max(1, Math.ceil(storojet_qty)));
     const bestand_regal = bestand_gesamt - bestand_storojet;
 
     return {

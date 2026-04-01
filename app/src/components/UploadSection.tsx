@@ -115,13 +115,6 @@ function ConfigPanel() {
             className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
           <span className="text-xs text-gray-400">Freiraum mind. auf einer Seite jedes Fachs zum Greifen</span>
         </label>
-        <label className="block col-span-2 md:col-span-1">
-          <span className="text-sm text-gray-600">Nachfüll-Intervall: <strong>{config.refill_weeks} Wochen</strong></span>
-          <input type="range" min={1} max={52} value={config.refill_weeks}
-            onChange={(e) => update({ refill_weeks: Number(e.target.value) })}
-            className="mt-1 block w-full" />
-          <span className="text-xs text-gray-400">STOROJET-Bestand = Bedarf für N Wochen</span>
-        </label>
         <div className="block">
           <span className="text-gray-500 text-xs">Teilerbreite: <strong>5 mm</strong> (fest)</span>
         </div>

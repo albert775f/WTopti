@@ -38,7 +38,7 @@ const REASON_ORDER: ExclusionReason[] = [
 ];
 
 export default function ABCSection() {
-  const { artikelProcessed, result, config } = useAppState();
+  const { artikelProcessed, result } = useAppState();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [abcFilter, setAbcFilter] = useState<string>('all');
@@ -269,7 +269,6 @@ export default function ABCSection() {
 
       {/* KPI Cards — Row 2 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard label="Replenishment Interval" value={`${config.refill_weeks} weeks`} />
         <KpiCard label="Bulk-Corrected" value={medianCount}
           sub="Articles using median formula" />
       </div>

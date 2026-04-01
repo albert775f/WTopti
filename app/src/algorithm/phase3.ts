@@ -7,15 +7,43 @@ const WT_DEPTH_KLEIN = 500;
 const WT_DEPTH_GROSS = 800;
 const MAX_HEIGHT_MM = 320;
 
-// 2D grid model constants
-// KLEIN: 1 partition at 350 mm → zones are [350, 150] or [500]
-// GROSS: up to 4 partitions at 100/150/200/350 mm → full flexibility
-const DEPTH_SEGMENTS_KLEIN = [350];
-const DEPTH_SEGMENTS_GROSS = [100, 150, 200, 350];
+// Physical groove positions — the single source of truth for WT zone layouts.
+// Changing these values regenerates all valid configs automatically.
+const KLEIN_GROOVES_DEPTH = [350];              // one divider → zones [350,150] or [500]
+const GROSS_GROOVES_DEPTH = [100, 150, 200, 350]; // four dividers → full flexibility
 
+const MIN_ZONE_MM = 90; // zones narrower than this are filtered out
+
+// Used by requiredDepthForStock() for FFD sort heuristic only
 function getAllowedSegments(typ: WTTyp): number[] {
-  return typ === 'KLEIN' ? DEPTH_SEGMENTS_KLEIN : DEPTH_SEGMENTS_GROSS;
+  return typ === 'KLEIN' ? KLEIN_GROOVES_DEPTH : GROSS_GROOVES_DEPTH;
 }
+
+interface WTTemplate {
+  typ: WTTyp;
+  mode: 'A' | 'B';
+  zoneDepths: number[]; // pre-computed row depths from groove subset
+}
+
+function enumerateTemplates(typ: WTTyp, grooveDepths: number[], wtDepth: number): WTTemplate[] {
+  const out: WTTemplate[] = [];
+  const n = grooveDepths.length;
+  const sorted = [...grooveDepths].sort((a, b) => a - b);
+  for (let mask = 0; mask < (1 << n); mask++) {
+    const chosen = sorted.filter((_, i) => (mask >> i) & 1);
+    const boundaries = [0, ...chosen, wtDepth];
+    const zones: number[] = [];
+    for (let i = 1; i < boundaries.length; i++) zones.push(boundaries[i] - boundaries[i - 1]);
+    if (zones.some(z => z < MIN_ZONE_MM)) continue;
+    for (const mode of ['A', 'B'] as const) {
+      out.push({ typ, mode, zoneDepths: zones });
+    }
+  }
+  return out;
+}
+
+const WT_TEMPLATES_KLEIN = enumerateTemplates('KLEIN', KLEIN_GROOVES_DEPTH, WT_DEPTH_KLEIN);
+const WT_TEMPLATES_GROSS = enumerateTemplates('GROSS', GROSS_GROOVES_DEPTH, WT_DEPTH_GROSS);
 const WIDTH_SPLIT_MM = 250;                   // Mode B longitudinal divider
 
 // Area constants for floor-cost calculations (used by phase5.ts)
@@ -333,138 +361,76 @@ function updateWTMetrics(wt: WT, config: WTConfig): void {
     : 'ok';
 }
 
+/** Pick the best template for a WT: match anchor + maximize zones for partners. */
+function pickTemplate(
+  typ: WTTyp, mode: 'A' | 'B',
+  anchor: ArtikelProcessed,
+  partners: ArtikelProcessed[],
+  config: WTConfig,
+): WTTemplate {
+  const candidates = (typ === 'KLEIN' ? WT_TEMPLATES_KLEIN : WT_TEMPLATES_GROSS)
+    .filter(t => t.mode === mode);
+  const zoneWidth = getZoneWidth(mode);
+  const numCols = mode === 'B' ? 2 : 1;
+  let best = candidates[candidates.length - 1]; // fallback: most rows
+  let bestScore = -1;
+  for (const tmpl of candidates) {
+    const anchorFits = tmpl.zoneDepths.some(
+      d => zoneCapacity(anchor, zoneWidth, d, config.griff_puffer_mm) > 0,
+    );
+    if (!anchorFits) continue;
+    const allArts = [anchor, ...partners];
+    const artsFit = allArts.filter(art =>
+      tmpl.zoneDepths.some(d => zoneCapacity(art, zoneWidth, d, config.griff_puffer_mm) > 0),
+    ).length;
+    const score = artsFit * 1000 + tmpl.zoneDepths.length * numCols;
+    if (score > bestScore) { bestScore = score; best = tmpl; }
+  }
+  return best;
+}
+
+/** Create a WT pre-populated with the best matching template zone layout. */
+function createWTWithTemplate(
+  id: string, typ: WTTyp, mode: 'A' | 'B', clusterId: number,
+  anchor: ArtikelProcessed, partners: ArtikelProcessed[],
+  config: WTConfig,
+): WT {
+  const tmpl = pickTemplate(typ, mode, anchor, partners, config);
+  const wt = createWT(id, typ, mode, clusterId);
+  wt.zone_depths_mm = [...tmpl.zoneDepths];
+  updateWTMetrics(wt, config);
+  return wt;
+}
+
 // ============================================================
 // Core placement: addArticleToWT
 // ============================================================
 
 /**
- * Try to place `remainingStk` items of `art` on `wt`.
- * Strategies (in order):
- *   1. Zone shrinking: if WT has 1 full-depth zone, shrink it and add new row
- *   2. New depth row (if depth and row-count allow)
- *   3. Mode B: free column in an existing row
- * Returns items placed (0 = could not fit).
+ * Place `remainingStk` items of `art` on `wt`.
+ * Requires wt.zone_depths_mm to be pre-populated (template-based).
+ * Tries zones in ascending depth order (tightest fit first = FFD).
+ * Returns items placed (0 = no zone fits).
  */
 function addArticleToWT(
   wt: WT, artNr: string, art: ArtikelProcessed, remainingStk: number,
-  config: WTConfig, artDataMap?: Map<string, ArtikelProcessed>,
+  config: WTConfig, _artDataMap?: Map<string, ArtikelProcessed>,
 ): number {
   if (wt.positionen.some(p => p.artikelnummer === artNr)) return 0;
   if (remainingStk <= 0) return 0;
+  if (wt.zone_depths_mm.length === 0) return 0;
 
   const zoneWidth = getZoneWidth(wt.mode);
-  const wtDepth = getWTDepth(wt.typ);
-  const maxR = getMaxRows(wt.typ, wt.mode);
+  const numCols = wt.mode === 'B' ? 2 : 1;
 
-  // Required depth based on per-zone stock (not total art.bestand)
-  const maxCapInFullZone = Math.max(1, zoneCapacity(art, zoneWidth, wtDepth, config.griff_puffer_mm));
-  const stockForThisZone = Math.min(remainingStk, maxCapInFullZone);
-  let seg = requiredDepthForStock(
-    art.hoehe_mm, art.breite_mm, art.laenge_mm, art.gewicht_kg,
-    stockForThisZone, zoneWidth, config.gewicht_hard_kg, wt.typ,
-  );
-  if (seg === null) {
-    // Article needs full zone — try to claim all remaining depth for Strategy 2.
-    // Do NOT return early here: Strategy 3 (Mode-B free column) must still be attempted
-    // even when no depth remains for a new row.
-    const usedNow = wt.zone_depths_mm.reduce((s, d) => s + d, 0);
-    const rem = wtDepth - usedNow;
-    seg = rem > 0 ? rem : wtDepth; // Strategy 2 will reject this if rem ≤ 0
-  }
+  // Sort rows by depth ASC: place in the tightest zone that fits (FFD)
+  const rowOrder = wt.zone_depths_mm
+    .map((depth, rowIdx) => ({ rowIdx, depth }))
+    .sort((a, b) => a.depth - b.depth);
 
-  // === Strategy 1: Zone shrinking ===
-  // If WT has exactly 1 full-depth row with 1 article, shrink that zone to free space.
-  let didShrink = false;
-  let originalFirstDepth = 0;
-
-  if (
-    wt.zone_depths_mm.length === 1 &&
-    wt.zone_depths_mm[0] === wtDepth &&
-    wt.positionen.length === 1 &&
-    artDataMap
-  ) {
-    const ep = wt.positionen[0];
-    const existingArt = artDataMap.get(ep.artikelnummer);
-    if (existingArt) {
-      const neededForExisting = requiredDepthForStock(
-        ep.hoehe_mm, ep.breite_mm, ep.laenge_mm, ep.gewicht_kg,
-        ep.stueckzahl, zoneWidth, config.gewicht_hard_kg, wt.typ,
-      );
-      if (neededForExisting !== null && neededForExisting < wtDepth) {
-        const capCheck = zoneCapacity(existingArt, zoneWidth, neededForExisting, config.griff_puffer_mm);
-        if (capCheck >= ep.stueckzahl && neededForExisting + seg <= wtDepth) {
-          originalFirstDepth = wt.zone_depths_mm[0];
-          wt.zone_depths_mm[0] = neededForExisting;
-          didShrink = true;
-        }
-      }
-    }
-  }
-
-  // === Strategy 2: New depth row ===
-  const usedDepth = wt.zone_depths_mm.reduce((s, d) => s + d, 0);
-  const rows = wt.zone_depths_mm.length;
-
-  if (rows < maxR) {
-    // Compute the segment based on what actually fits in the free depth.
-    // The initial `seg` was computed for maxCapInFullZone (full WT depth), which can
-    // exceed the free depth when the WT already has rows. Recompute for free depth.
-    const freeD = wtDepth - usedDepth;
-    let effectiveSeg = seg;
-    let effectiveStk = remainingStk;
-    if (freeD > 0 && usedDepth + seg > wtDepth) {
-      // Try again with the free depth as the zone capacity limit
-      const capInFree = zoneCapacity(art, zoneWidth, freeD, config.griff_puffer_mm);
-      if (capInFree > 0) {
-        const stkInFree = Math.min(remainingStk, capInFree);
-        const segInFree = requiredDepthForStock(
-          art.hoehe_mm, art.breite_mm, art.laenge_mm, art.gewicht_kg,
-          stkInFree, zoneWidth, config.gewicht_hard_kg, wt.typ,
-        );
-        if (segInFree !== null && usedDepth + segInFree <= wtDepth) {
-          effectiveSeg = segInFree;
-          effectiveStk = stkInFree;
-        } else {
-          // No allowed segment fits — use the actual remainder depth directly
-          // (e.g. KLEIN: 150 mm remainder after 350 mm partition)
-          effectiveSeg = freeD;
-          effectiveStk = stkInFree;
-        }
-      }
-    }
-
-    if (usedDepth + effectiveSeg <= wtDepth) {
-      const cap = zoneCapacity(art, zoneWidth, effectiveSeg, config.griff_puffer_mm);
-      if (cap > 0) {
-        let toPlace = Math.min(effectiveStk, cap);
-        if (art.gewicht_kg > 0) {
-          const maxByWeight = Math.floor(
-            (config.gewicht_hard_kg - wt.gesamtgewicht_kg) / art.gewicht_kg,
-          );
-          toPlace = Math.min(toPlace, maxByWeight);
-        }
-        if (toPlace > 0) {
-          const rowIdx = rows;
-          const colIdx = 0;
-          const zoneIdx = rowIdx * (wt.mode === 'B' ? 2 : 1) + colIdx;
-          wt.zone_depths_mm.push(effectiveSeg);
-          wt.positionen.push(makePosition(artNr, art, toPlace, zoneIdx, rowIdx, colIdx));
-          updateWTMetrics(wt, config);
-          return toPlace;
-        }
-      }
-    }
-  }
-
-  // Undo shrink if strategy 2 failed
-  if (didShrink) wt.zone_depths_mm[0] = originalFirstDepth;
-
-  // === Strategy 3: Mode B — free column in existing row ===
-  if (wt.mode === 'B') {
-    for (let rowIdx = 0; rowIdx < wt.zone_depths_mm.length; rowIdx++) {
-      const rowDepth = wt.zone_depths_mm[rowIdx];
-      const colsUsed = wt.positionen.filter(p => p.row_index === rowIdx).length;
-      if (colsUsed >= 2) continue;
+  for (const { rowIdx, depth: rowDepth } of rowOrder) {
+    for (let colIdx = 0; colIdx < numCols; colIdx++) {
+      if (wt.positionen.some(p => p.row_index === rowIdx && p.col_index === colIdx)) continue;
 
       const cap = zoneCapacity(art, zoneWidth, rowDepth, config.griff_puffer_mm);
       if (cap <= 0) continue;
@@ -478,8 +444,7 @@ function addArticleToWT(
       }
       if (toPlace <= 0) continue;
 
-      const colIdx = colsUsed; // 0 or 1
-      const zoneIdx = rowIdx * 2 + colIdx;
+      const zoneIdx = rowIdx * numCols + colIdx;
       wt.positionen.push(makePosition(artNr, art, toPlace, zoneIdx, rowIdx, colIdx));
       updateWTMetrics(wt, config);
       return toPlace;
@@ -611,9 +576,12 @@ function step0ClusterPack(
       partners.some(p => wtTypePlan.get(p.nr) === 'GROSS' && (remainingStock.get(p.nr) ?? 0) > 0);
     const typ: WTTyp = needsGross ? 'GROSS' : 'KLEIN';
 
-    const wt = createWT(nextId(typ), typ, 'B', 0);
+    const partnerArts = partners
+      .map(p => artDataMap.get(p.nr))
+      .filter((a): a is ArtikelProcessed => !!a);
+    const wt = createWTWithTemplate(nextId(typ), typ, 'B', 0, anchorArt, partnerArts, config);
 
-    const placedAnchor = addArticleToWT(wt, anchorNr, anchorArt, anchorStk, config, artDataMap);
+    const placedAnchor = addArticleToWT(wt, anchorNr, anchorArt, anchorStk, config);
     if (placedAnchor <= 0) continue;
 
     remainingStock.set(anchorNr, anchorStk - placedAnchor);
@@ -631,7 +599,7 @@ function step0ClusterPack(
       if (!pArt) continue;
 
       const cappedStk = Math.max(1, Math.ceil(pStk * PARTNER_STOCK_FRACTION));
-      const placed = addArticleToWT(wt, pNr, pArt, cappedStk, config, artDataMap);
+      const placed = addArticleToWT(wt, pNr, pArt, cappedStk, config);
       if (placed > 0) {
         remainingStock.set(pNr, pStk - placed);
         partnersPlaced++;
@@ -754,7 +722,7 @@ function step1PackTight(
       if (pStk <= 0) continue;
       const pArt = artDataMap.get(pNr);
       if (!pArt) continue;
-      const pPlaced = addArticleToWT(wt, pNr, pArt, pStk, config, artDataMap);
+      const pPlaced = addArticleToWT(wt, pNr, pArt, pStk, config);
       if (pPlaced > 0) {
         remainingStock.set(pNr, pStk - pPlaced);
       }
@@ -787,7 +755,7 @@ function step1PackTight(
         }
       }
       for (const wt of [...partnerWTs, ...otherWTs]) {
-        const toPlace = addArticleToWT(wt, artNr, art, stk, config, artDataMap);
+        const toPlace = addArticleToWT(wt, artNr, art, stk, config);
         if (toPlace > 0) {
           stk -= toPlace;
           remainingStock.set(artNr, stk);
@@ -797,11 +765,14 @@ function step1PackTight(
       }
       if (placed > 0) continue;
 
-      // Create new WT
+      // Create new WT — pick template based on anchor + direct affinity partners
       const mode: 'A' | 'B' = articleFitsMode(art) === 'BOTH' ? 'B' : 'A';
       const typ = wtTypePlan.get(artNr) ?? 'KLEIN';
-      const wt = createWT(nextId(typ), typ, mode, 0);
-      const toPlace = addArticleToWT(wt, artNr, art, stk, config, artDataMap);
+      const partnerArts = getDirectPartners(artNr)
+        .map(p => artDataMap.get(p.nr))
+        .filter((a): a is ArtikelProcessed => !!a);
+      const wt = createWTWithTemplate(nextId(typ), typ, mode, 0, art, partnerArts, config);
+      const toPlace = addArticleToWT(wt, artNr, art, stk, config);
 
       if (toPlace > 0) {
         stk -= toPlace;
@@ -809,8 +780,8 @@ function step1PackTight(
         allWTs.push(wt);
         coSeedPartners(artNr, wt);
       } else if (mode === 'B') {
-        const wtA = createWT(nextId(typ), typ, 'A', 0);
-        const toPlaceA = addArticleToWT(wtA, artNr, art, stk, config, artDataMap);
+        const wtA = createWTWithTemplate(nextId(typ), typ, 'A', 0, art, partnerArts, config);
+        const toPlaceA = addArticleToWT(wtA, artNr, art, stk, config);
         if (toPlaceA > 0) {
           stk -= toPlaceA;
           remainingStock.set(artNr, stk);
@@ -911,16 +882,10 @@ function step2FillGaps(
   };
 
   const hasFreeCapacity = (wt: WT): boolean => {
-    const wtDepth = getWTDepth(wt.typ);
-    const usedDepth = wt.zone_depths_mm.reduce((s, d) => s + d, 0);
-    const maxR = getMaxRows(wt.typ, wt.mode);
-    if (usedDepth + 100 <= wtDepth && wt.zone_depths_mm.length < maxR) return true;
-    if (wt.mode === 'B') {
-      return wt.zone_depths_mm.some(
-        (_, rowIdx) => wt.positionen.filter(p => p.row_index === rowIdx).length < 2,
-      );
-    }
-    return false;
+    const numCols = wt.mode === 'B' ? 2 : 1;
+    return wt.zone_depths_mm.some(
+      (_, rowIdx) => wt.positionen.filter(p => p.row_index === rowIdx).length < numCols,
+    );
   };
 
   // Sort WTs: primary = free depth DESC (most room = best targets for co-location),
@@ -1040,23 +1005,13 @@ export function processPhase3(
     if (deficit <= 0) continue;
 
     const fbTyp = wtTypePlan.get(artNr) ?? 'KLEIN';
-    const fbDepth = getWTDepth(fbTyp);
-    const fbCap = zoneCapacity(art, WT_WIDTH, fbDepth, config.griff_puffer_mm);
-    if (fbCap <= 0) continue;
 
     while (deficit > 0) {
-      let toPlace = Math.min(deficit, fbCap);
-      if (art.gewicht_kg > 0) {
-        toPlace = Math.min(toPlace, Math.floor(config.gewicht_hard_kg / art.gewicht_kg));
-      }
-      if (toPlace <= 0) break;
-
-      const fbWT = createWT(nextId(fbTyp), fbTyp, 'A', 0);
-      fbWT.zone_depths_mm = [fbDepth];
-      fbWT.positionen.push(makePosition(artNr, art, toPlace, 0, 0, 0));
-      updateWTMetrics(fbWT, config);
+      const fbWT = createWTWithTemplate(nextId(fbTyp), fbTyp, 'A', 0, art, [], config);
+      const placed = addArticleToWT(fbWT, artNr, art, deficit, config);
+      if (placed <= 0) break; // article can't fit even in a fresh WT — skip
       finalWTs.push(fbWT);
-      deficit -= toPlace;
+      deficit -= placed;
     }
   }
 

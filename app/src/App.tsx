@@ -168,13 +168,22 @@ export default function App() {
             </button>
           ))}
         </nav>
-        {state.result && (
-          <div className="p-4 border-t border-gray-200 text-xs text-gray-500 space-y-1">
-            <p>WTs: {state.result.stats.wts_benoetigt}</p>
-            <p>Klein: {state.result.stats.wts_klein} | Groß: {state.result.stats.wts_gross}</p>
-            <p>Artikel: {state.result.stats.artikel_platziert}/{state.result.stats.artikel_gesamt}</p>
-          </div>
-        )}
+        {state.result && (() => {
+          const TOTAL_KLEIN = 4145;
+          const TOTAL_GROSS = 1111;
+          const { wts_klein, wts_gross, wts_benoetigt, artikel_platziert, artikel_gesamt } = state.result.stats;
+          const pctKlein = ((wts_klein / TOTAL_KLEIN) * 100).toFixed(1);
+          const pctGross = ((wts_gross / TOTAL_GROSS) * 100).toFixed(1);
+          const pctTotal = (((wts_klein + wts_gross) / (TOTAL_KLEIN + TOTAL_GROSS)) * 100).toFixed(1);
+          return (
+            <div className="p-4 border-t border-gray-200 text-xs text-gray-500 space-y-1">
+              <p>WTs: {wts_benoetigt} <span className="text-gray-400">({pctTotal}%)</span></p>
+              <p>Klein: {wts_klein} <span className="text-gray-400">({pctKlein}%)</span></p>
+              <p>Groß: {wts_gross} <span className="text-gray-400">({pctGross}%)</span></p>
+              <p>Artikel: {artikel_platziert}/{artikel_gesamt}</p>
+            </div>
+          );
+        })()}
       </aside>
 
       {/* Main Content */}
