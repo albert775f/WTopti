@@ -25,7 +25,7 @@ interface WTTemplate {
   zoneDepths: number[]; // pre-computed row depths from groove subset
 }
 
-function enumerateTemplates(
+export function enumerateTemplates(
   typ: WTTyp, grooveDepths: number[], wtDepth: number, teilerBreite = 0,
 ): WTTemplate[] {
   const out: WTTemplate[] = [];
@@ -370,7 +370,20 @@ function updateWTMetrics(wt: WT, config: WTConfig): void {
     : 'ok';
 }
 
-/** Pick the best template for a WT: match anchor + maximize zones for partners. */
+/**
+ * Pick the best template for a WT.
+ *
+ * Simulates FFD zone assignment with zone exclusivity: each zone row has numCols
+ * slots (1 for Mode A, 2 for Mode B), and each slot holds exactly one article type.
+ * Articles are sorted by minimum required zone depth ascending (shallowest first)
+ * so shallow articles take tight zones and leave deeper zones for larger articles.
+ *
+ * Primary score: how many cluster articles can be co-located on this template.
+ * Tiebreaker: total items placed (rewards tighter zone fits where more items fit).
+ *
+ * This replaces the old "zone count" tiebreaker that caused templates with many
+ * small zones to win even when those zones couldn't fit the actual articles.
+ */
 function pickTemplate(
   typ: WTTyp, mode: 'A' | 'B',
   anchor: ArtikelProcessed,
@@ -382,18 +395,46 @@ function pickTemplate(
     .filter(t => t.mode === mode);
   const zoneWidth = getZoneWidth(mode);
   const numCols = mode === 'B' ? 2 : 1;
-  let best = candidates[candidates.length - 1]; // fallback: most rows
+  let best = candidates[candidates.length - 1];
   let bestScore = -1;
+
   for (const tmpl of candidates) {
-    const anchorFits = tmpl.zoneDepths.some(
-      d => zoneCapacity(anchor, zoneWidth, d, config.griff_puffer_mm) > 0,
-    );
-    if (!anchorFits) continue;
-    const allArts = [anchor, ...partners];
-    const artsFit = allArts.filter(art =>
-      tmpl.zoneDepths.some(d => zoneCapacity(art, zoneWidth, d, config.griff_puffer_mm) > 0),
-    ).length;
-    const score = artsFit * 1000 + tmpl.zoneDepths.length * numCols;
+    const sortedZones = [...tmpl.zoneDepths].sort((a, b) => a - b);
+
+    // Each depth row has numCols slots; track remaining slots per row
+    const slots = sortedZones.map(d => ({ depth: d, remaining: numCols }));
+
+    // Sort partners by minimum fitting zone depth ascending — shallowest-needing first
+    // so they don't occupy deep zones that only large articles can use.
+    const sortedPartners = [...partners].sort((a, b) => {
+      const da = slots.find(s => zoneCapacity(a, zoneWidth, s.depth, config.griff_puffer_mm) > 0)?.depth ?? Infinity;
+      const db = slots.find(s => zoneCapacity(b, zoneWidth, s.depth, config.griff_puffer_mm) > 0)?.depth ?? Infinity;
+      return da - db;
+    });
+
+    // Anchor first, then partners in ascending required-depth order
+    const allArts = [anchor, ...sortedPartners];
+
+    let artsPlaced = 0;
+    let itemsPlaced = 0;
+    for (const art of allArts) {
+      for (const slot of slots) {
+        if (slot.remaining <= 0) continue;
+        const cap = zoneCapacity(art, zoneWidth, slot.depth, config.griff_puffer_mm);
+        if (cap > 0) {
+          slot.remaining--;
+          artsPlaced++;
+          itemsPlaced += Math.min(cap, art.bestand);
+          break; // tightest fit — mirrors addArticleToWT ascending-depth order
+        }
+      }
+    }
+
+    // Anchor is allArts[0]; if artsPlaced === 0 the anchor didn't fit anywhere → skip
+    if (artsPlaced === 0) continue;
+
+    // Primary: maximize co-located article count; tiebreaker: total items placed
+    const score = artsPlaced * 1_000_000 + itemsPlaced;
     if (score > bestScore) { bestScore = score; best = tmpl; }
   }
   return best;
@@ -955,14 +996,17 @@ export function processPhase3(
   processed: ArtikelProcessed[],
   affinityResult: AffinityResult,
   config: WTConfig,
+  grooveOverrides?: { klein?: number[]; gross?: number[] },
 ): WT[] {
   const { plan: wtTypePlan } = planWTTypes(processed, config);
 
   // Build templates with config-specific divider width so zone capacity is accurate
   const teilerBreite = config.teiler_breite_mm ?? 5;
+  const kleinGrooves = grooveOverrides?.klein ?? KLEIN_GROOVES_DEPTH;
+  const grossGrooves = grooveOverrides?.gross ?? GROSS_GROOVES_DEPTH;
   const configTemplates = {
-    klein: enumerateTemplates('KLEIN', KLEIN_GROOVES_DEPTH, WT_DEPTH_KLEIN, teilerBreite),
-    gross: enumerateTemplates('GROSS', GROSS_GROOVES_DEPTH, WT_DEPTH_GROSS, teilerBreite),
+    klein: enumerateTemplates('KLEIN', kleinGrooves, WT_DEPTH_KLEIN, teilerBreite),
+    gross: enumerateTemplates('GROSS', grossGrooves, WT_DEPTH_GROSS, teilerBreite),
   };
 
   const artDataMap = new Map<string, ArtikelProcessed>();
