@@ -2,7 +2,7 @@ import { processPhase1 } from '../algorithm/phase1';
 import { processPhase2 } from '../algorithm/phase2';
 import { processPhase3 } from '../algorithm/phase3';
 import { processPhase4 } from '../algorithm/phase4';
-import { processPhase5 } from '../algorithm/phase5';
+
 import { runHardChecks } from '../validation/hardChecks';
 import { calculateBaseline } from '../validation/baseline';
 import { calculateMetrics } from '../validation/metrics';
@@ -78,13 +78,6 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     const phase4Validation = processPhase4(wts, config);
     self.postMessage({ type: 'progress', phase: 4, progress: 85 } satisfies WorkerMessage);
 
-    self.postMessage({
-      type: 'progress',
-      phase: 5,
-      phaseName: 'WT-Verhältnis-Analyse',
-      progress: 85,
-    } satisfies WorkerMessage);
-
     // Merge validations
     const validation = {
       hard_fails: [
@@ -116,12 +109,6 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
         gesamtbestand: bestand.reduce((s, b) => s + (b.bestand || 0), 0),
       },
     };
-
-    const { ratioResult, articleCosts } = processPhase5(
-      baseResult, config, phase1Result.processed,
-    );
-    baseResult.wt_ratio = ratioResult;
-    baseResult.article_costs = articleCosts;
 
     // Compute validation dashboard
     const { wts: baselineWTs } = calculateBaseline(phase1Result.processed, config);
@@ -162,7 +149,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
       warnings,
     };
 
-    self.postMessage({ type: 'progress', phase: 5, progress: 100 } satisfies WorkerMessage);
+    self.postMessage({ type: 'progress', phase: 4, progress: 100 } satisfies WorkerMessage);
     self.postMessage({ type: 'result', result: baseResult } satisfies WorkerMessage);
   } catch (err) {
     self.postMessage({

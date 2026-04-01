@@ -150,56 +150,6 @@ export interface AffinityResult {
   groupCount: number;
 }
 
-// ============ WT-RATIO RECOMMENDATION ============
-
-export interface ArticleCost {
-  artikelnummer: string;
-  bezeichnung: string;
-  bestand: number;
-  fits_klein: boolean;
-  items_per_klein: number;
-  n_klein: number;
-  area_cost_klein: number;   // m² floor space if stored on KLEIN
-  items_per_gross: number;
-  n_gross: number;
-  area_cost_gross: number;   // m² floor space if stored on GROSS
-  best_type: 'KLEIN' | 'GROSS';
-  area_saving: number;       // area_cost_klein - area_cost_gross (positive = GROSS saves floor space)
-  is_weight_limited: boolean; // items_per_klein === items_per_gross (weight cap dominates)
-}
-
-export interface WTRatioResult {
-  warehouse_area_m2: number;          // 1480.65
-
-  // Step 1: What the stock demands (unconstrained)
-  demand_klein: number;               // WTs needed for KLEIN-optimal articles
-  demand_gross: number;               // WTs needed for GROSS-optimal articles
-  demand_area_m2: number;             // total floor area the stock needs
-  demand_area_pct: number;            // demand_area / warehouse_area × 100
-
-  // Step 2: Scaled to warehouse capacity
-  scaled_klein: number;               // recommended KLEIN count (purchase number)
-  scaled_gross: number;               // recommended GROSS count (purchase number)
-  scaled_area_m2: number;             // should ≈ warehouse_area_m2
-
-  // Reserve (scaled − demand = spare WTs for growth)
-  reserve_klein: number;
-  reserve_gross: number;
-  reserve_area_m2: number;
-
-  // Breakdown
-  articles_must_gross: number;
-  articles_prefer_gross: number;
-  articles_on_klein: number;
-
-  // Status
-  fits_warehouse: boolean;           // demand_area ≤ warehouse_area (after best-effort shift)
-  overflow_m2: number;               // if > 0: demand exceeds warehouse
-
-  top_gross_examples: ArticleCost[];
-  recommendation: string;
-}
-
 // ============ EXCLUSION LOG TYPES ============
 
 export type ExclusionReason =
@@ -251,8 +201,6 @@ export interface OptimizationResult {
   };
   validation_dashboard?: ValidationDashboardData;
   coMatrix?: Record<string, Record<string, number>>;
-  wt_ratio?: WTRatioResult;
-  article_costs?: ArticleCost[];
 }
 
 // ============ VALIDATION TYPES ============

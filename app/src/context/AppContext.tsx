@@ -26,7 +26,7 @@ export interface AppState {
   optimizationStatus: 'idle' | 'running' | 'done' | 'error';
   optimizationProgress: { phase: number; phaseName: string; progress: number };
   result: OptimizationResult | null;
-  activeSection: 'upload' | 'abc' | 'visualization' | 'ratio' | 'validation';
+  activeSection: 'upload' | 'abc' | 'visualization' | 'validation';
   validationThresholds: ThresholdConfig;
   apiStatus: ApiStatus | null;
   apiData: ApiData | null;

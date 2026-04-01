@@ -5,7 +5,7 @@ import { processPhase1 } from './algorithm/phase1';
 import UploadSection from './components/UploadSection';
 import ABCSection from './components/ABCSection';
 import WTVisualization from './components/WTVisualization';
-import WTRatioSection from './components/WTRatioSection';
+
 import ValidationDashboard from './components/validation/ValidationDashboard';
 import type { AppState } from './context/AppContext';
 
@@ -13,7 +13,7 @@ const NAV_ITEMS: { id: AppState['activeSection']; label: string; icon: string }[
   { id: 'upload', label: 'Daten & Config', icon: '📤' },
   { id: 'abc', label: 'ABC-Analyse', icon: '📊' },
   { id: 'visualization', label: 'WT-Visualisierung', icon: '🗺️' },
-  { id: 'ratio', label: 'WT-Simulator', icon: '⚖️' },
+
   { id: 'validation', label: 'Ergebnisvalidierung', icon: '✓' },
 ];
 
@@ -105,8 +105,7 @@ export default function App() {
         return <ABCSection />;
       case 'visualization':
         return <WTVisualization />;
-      case 'ratio':
-        return <WTRatioSection />;
+
       case 'validation':
         return state.result?.validation_dashboard ? (
           <ValidationDashboard
