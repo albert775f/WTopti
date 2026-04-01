@@ -6,7 +6,7 @@ const router = Router();
 // POST /api/runs — save a completed optimization run
 router.post('/', async (req, res) => {
   try {
-    const { config, stats, metrics, result } = req.body;
+    const { config, stats, metrics, result, commit_hash } = req.body;
     if (!config || !stats || !result) {
       res.status(400).json({ error: 'config, stats and result are required' });
       return;
@@ -18,10 +18,10 @@ router.post('/', async (req, res) => {
     const bestand_uploaded_at = metaResult.rows[0]?.value ?? null;
 
     const { rows } = await pool.query(
-      `INSERT INTO runs (bestand_uploaded_at, config, stats, metrics, result)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO runs (bestand_uploaded_at, commit_hash, config, stats, metrics, result)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, created_at`,
-      [bestand_uploaded_at, JSON.stringify(config), JSON.stringify(stats), JSON.stringify(metrics ?? null), JSON.stringify(result)]
+      [bestand_uploaded_at, commit_hash ?? null, JSON.stringify(config), JSON.stringify(stats), JSON.stringify(metrics ?? null), JSON.stringify(result)]
     );
 
     res.json({ id: rows[0].id, created_at: rows[0].created_at });
@@ -35,7 +35,7 @@ router.post('/', async (req, res) => {
 router.get('/', async (_req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, created_at, bestand_uploaded_at, stats, metrics
+      `SELECT id, created_at, bestand_uploaded_at, commit_hash, stats, metrics
        FROM runs
        ORDER BY created_at DESC`
     );

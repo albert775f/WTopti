@@ -7,6 +7,12 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
+
+const gitCommit = (() => {
+  try { return execSync('git rev-parse --short HEAD', { cwd: path.resolve(__dirname, '..') }).toString().trim(); }
+  catch { return 'unknown'; }
+})();
 
 import { parseArtikel, parseBestellungen, parseBestand } from '../server/src/parser';
 import { processPhase1 } from '../app/src/algorithm/phase1';
@@ -301,6 +307,7 @@ async function main() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        commit_hash: gitCommit,
         config,
         stats: {
           artikel_gesamt: artikel.length,

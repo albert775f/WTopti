@@ -42,6 +42,7 @@ export function useOptimizer() {
             stats: r.stats,
             metrics: r.validation_dashboard?.metrics ?? null,
             result: r,
+            commit_hash: typeof __GIT_COMMIT__ !== 'undefined' ? __GIT_COMMIT__ : 'unknown',
           }),
         }).catch(err => console.warn('Failed to save run:', err));
       } else if (msg.type === 'error') {
