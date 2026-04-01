@@ -56,8 +56,8 @@ function checkC2_GewichtHardLimit(wts: WT[]): HardCheckResult {
 
 function checkC3_HoehenLimit(wts: WT[], artikel: ArtikelData[]): HardCheckResult {
   // After Bug 16 (3D orientation), any dimension can be vertical.
-  // An article is placeable iff at least one dimension ≤ 320 mm.
-  // Check: min(h, b, l) > 320 means truly unplaceable (should have been filtered).
+  // An article is placeable iff at least one dimension ≤ 300 mm.
+  // Check: min(h, b, l) > 300 means truly unplaceable (should have been filtered).
   const artMap = new Map(artikel.map(a => [a.artikelnummer, a]));
   const details: HardCheckDetail[] = [];
   for (const wt of wts) {
@@ -65,13 +65,13 @@ function checkC3_HoehenLimit(wts: WT[], artikel: ArtikelData[]): HardCheckResult
       const art = artMap.get(pos.artikelnummer);
       if (art) {
         const minDim = Math.min(art.hoehe_mm, art.breite_mm, art.laenge_mm);
-        if (minDim > 320) {
-          details.push({ key: pos.artikelnummer, expected: '≤320 mm (min. Dim.)', actual: `${minDim} mm`, message: `Artikel ${pos.artikelnummer}: Mindestdimension ${minDim} mm > 320 mm` });
+        if (minDim > 300) {
+          details.push({ key: pos.artikelnummer, expected: '≤300 mm (min. Dim.)', actual: `${minDim} mm`, message: `Artikel ${pos.artikelnummer}: Mindestdimension ${minDim} mm > 300 mm` });
         }
       }
     }
   }
-  return { id: 'C3', name: 'Höhen-Limit (320 mm)', status: details.length === 0 ? 'PASS' : 'FAIL', errorCount: details.length, details };
+  return { id: 'C3', name: 'Höhen-Limit (300 mm)', status: details.length === 0 ? 'PASS' : 'FAIL', errorCount: details.length, details };
 }
 
 function checkC4_WTEindeutigkeit(wts: WT[]): HardCheckResult {

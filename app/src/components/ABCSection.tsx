@@ -20,7 +20,7 @@ const ABC_COLORS: Record<string, string> = { A: '#22c55e', B: '#eab308', C: '#9c
 
 const REASON_LABELS: Record<ExclusionReason, string> = {
   SPERRGUT: 'Sperrgut (anderes Lager)',
-  HEIGHT_EXCEEDED: 'Höhe überschreitet 320 mm',
+  HEIGHT_EXCEEDED: 'Höhe überschreitet 300 mm',
   WEIGHT_EXCEEDED: 'Einzelgewicht überschreitet 24 kg',
   DIMENSIONS_MISSING: 'Maße unvollständig (= 0)',
   WEIGHT_MISSING: 'Gewicht unbekannt',

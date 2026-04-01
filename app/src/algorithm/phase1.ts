@@ -248,7 +248,7 @@ export function processPhase1(
     }
 
     // Filter 6b: SEGMENT_TOO_SMALL — article footprint cannot fit in any WT orientation.
-    // A GROSS WT is 500mm wide × 800mm deep. An article fits if at least one dimension ≤ 320mm
+    // A GROSS WT is 500mm wide × 800mm deep. An article fits if at least one dimension ≤ 300mm
     // can serve as vertical and the remaining two footprint dimensions fit in 500×800mm.
     {
       const dims = [art.hoehe_mm, art.breite_mm, art.laenge_mm];

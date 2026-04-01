@@ -5,7 +5,7 @@ import type { AffinityResult } from '../types';
 const WT_WIDTH = 500;
 const WT_DEPTH_KLEIN = 500;
 const WT_DEPTH_GROSS = 800;
-const MAX_HEIGHT_MM = 320;
+const MAX_HEIGHT_MM = 300;
 
 // Physical groove positions — the single source of truth for WT zone layouts.
 // Changing these values regenerates all valid configs automatically.

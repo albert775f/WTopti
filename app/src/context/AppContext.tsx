@@ -53,7 +53,7 @@ export type Action =
 const DEFAULT_CONFIG: WTConfig = {
   gewicht_hard_kg: 24,
   gewicht_soft_kg: 20,
-  hoehe_limit_mm: 320,
+  hoehe_limit_mm: 300,
   teiler_breite_mm: 5,
   warehouse_area_m2: 1480.65,
   min_segment_mm: 90,

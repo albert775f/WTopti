@@ -71,7 +71,7 @@ export function parseArtikel(buffer: Buffer): ArtikelRow[] {
       : (safeParseFloat(row['Länge']) ?? 0);
 
     const grundflaeche_mm2 = breite_mm * laenge_mm;
-    const max_stapelhoehe = hoehe_mm > 0 ? Math.floor(320 / hoehe_mm) : 0;
+    const max_stapelhoehe = hoehe_mm > 0 ? Math.floor(300 / hoehe_mm) : 0;
 
     const volumen_l = row['Volumen in Liter'] ? parseFloat(String(row['Volumen in Liter'])) : undefined;
 

@@ -10,7 +10,7 @@ const ABC_COLORS: Record<string, string> = { A: '#22c55e', B: '#eab308', C: '#9c
 
 type ColorMode = 'cluster' | 'abc';
 const DIVIDER_MM = 5;
-const MAX_HEIGHT_MM = 320;
+const MAX_HEIGHT_MM = 300;
 const COMPACT_THRESHOLD = 30;
 
 // ---- Stack layout within a uniform zone ----

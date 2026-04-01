@@ -10,7 +10,7 @@ export interface ArtikelData {
   gewicht_kg: number;     // 0 if missing in source
   volumen_l?: number;
   grundflaeche_mm2: number;   // breite_mm × laenge_mm (pre-computed by backend)
-  max_stapelhoehe: number;    // floor(320 / hoehe_mm); 0 if hoehe_mm=0
+  max_stapelhoehe: number;    // floor(300 / hoehe_mm); 0 if hoehe_mm=0
   sperrgut?: string;          // raw Sperrgut value from Excel, e.g. 'Lager B'
 }
 
@@ -60,7 +60,7 @@ export interface ArtikelProcessed extends ArtikelData {
 export interface WTConfig {
   gewicht_hard_kg: number;        // default: 24
   gewicht_soft_kg: number;        // default: 20
-  hoehe_limit_mm: number;         // default: 320
+  hoehe_limit_mm: number;         // default: 300
   teiler_breite_mm: number;          // hardcoded 5 mm — not configurable (spec §6)
   teiler_verlust_prozent?: number;   // legacy, removed from UI
   teiler_modus?: 'exact' | 'percent'; // legacy, removed from UI
@@ -95,7 +95,7 @@ export interface WTPosition {
   hoehe_mm: number;        // vertical dimension of article
   breite_mm: number;       // footprint dimension
   laenge_mm: number;       // footprint dimension
-  max_stapelhoehe: number; // floor(320/hoehe_mm)
+  max_stapelhoehe: number; // floor(300/hoehe_mm)
   zone_index: number;      // 0-based zone index on this WT
   row_index: number;       // depth row (0-based)
   col_index: number;       // column: 0 = left/full, 1 = right (Mode B only)
@@ -178,7 +178,7 @@ export interface ExclusionLogEntry {
 export interface ValidationResult {
   hard_fails: string[];
   warnungen: string[];
-  artikel_nicht_lagerfaehig: string[];    // Höhe > 320mm
+  artikel_nicht_lagerfaehig: string[];    // Höhe > 300mm
   artikel_unvollstaendig: string[];       // Fehlende Maße/Gewicht
   artikel_ohne_match: string[];           // Bestellarchiv ohne Artikelliste-Match
   fehlende_artikel?: Array<{ artikelnummer: string; bestand: number }>; // Bestand ohne Artikelliste
