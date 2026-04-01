@@ -128,7 +128,11 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     const excludedArticleNumbers = new Set<string>(
       (phase1Result.validation.exclusion_log ?? []).map(e => e.artikelnummer),
     );
-    const hardChecks = runHardChecks(wts, artikel, bestand, excludedArticleNumbers);
+    // C1 must compare against storojet bestand (phase1-capped), not raw file bestand
+    const storojetBestandList = phase1Result.processed
+      .filter(a => a.bestand > 0)
+      .map(a => ({ artikelnummer: String(a.artikelnummer), bestand: a.bestand }));
+    const hardChecks = runHardChecks(wts, artikel, storojetBestandList, excludedArticleNumbers);
     const orderSimulation = runOrderSimulation(phase1Result.filteredBestellungen, wts, baselineWTs);
     const metricsRaw = calculateMetrics(
       wts, baselineWTs, phase1Result.processed, phase1Result.filteredBestellungen,

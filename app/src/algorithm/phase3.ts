@@ -8,7 +8,14 @@ const WT_DEPTH_GROSS = 800;
 const MAX_HEIGHT_MM = 320;
 
 // 2D grid model constants
-const DEPTH_SEGMENTS = [100, 150, 200, 350]; // mm, ascending — standard divider sizes
+// KLEIN: 1 partition at 350 mm → zones are [350, 150] or [500]
+// GROSS: up to 4 partitions at 100/150/200/350 mm → full flexibility
+const DEPTH_SEGMENTS_KLEIN = [350];
+const DEPTH_SEGMENTS_GROSS = [100, 150, 200, 350];
+
+function getAllowedSegments(typ: WTTyp): number[] {
+  return typ === 'KLEIN' ? DEPTH_SEGMENTS_KLEIN : DEPTH_SEGMENTS_GROSS;
+}
 const WIDTH_SPLIT_MM = 250;                   // Mode B longitudinal divider
 
 // Area constants for floor-cost calculations (used by phase5.ts)
@@ -168,8 +175,9 @@ function getWTArea(typ: WTTyp): number {
   return typ === 'KLEIN' ? KLEIN_AREA : GROSS_AREA;
 }
 
-function getMaxRows(typ: WTTyp, mode: 'A' | 'B'): number {
-  return mode === 'B' ? 3 : (typ === 'KLEIN' ? 5 : 6);
+function getMaxRows(typ: WTTyp, _mode: 'A' | 'B'): number {
+  // KLEIN: 1 partition → 2 rows; GROSS: 4 partitions → 5 rows (same for mode A and B)
+  return typ === 'KLEIN' ? 2 : 5;
 }
 
 function getZoneWidth(mode: 'A' | 'B'): number {
@@ -213,6 +221,7 @@ function zoneCapacity(
 function requiredDepthForStock(
   h_mm: number, b_mm: number, l_mm: number, w_kg: number,
   stock: number, zoneWidth: number, maxWeightKg: number,
+  typ: WTTyp = 'GROSS',
 ): number | null {
   // Find best orientation for this zone width (ignore depth limit)
   const orient = bestArticleOrientation(h_mm, b_mm, l_mm, w_kg, zoneWidth, 9999, maxWeightKg);
@@ -224,10 +233,10 @@ function requiredDepthForStock(
   const rowsNeeded = Math.ceil(stock / itemsPerRow);
   const depthNeeded = orient.h2_mm * rowsNeeded;
 
-  for (const seg of DEPTH_SEGMENTS) {
+  for (const seg of getAllowedSegments(typ)) {
     if (seg >= depthNeeded) return seg;
   }
-  return null; // needs > max(DEPTH_SEGMENTS) = 350mm → full zone
+  return null; // needs > max allowed segment → full zone
 }
 
 function requiredDepthSegment(
@@ -352,7 +361,7 @@ function addArticleToWT(
   const stockForThisZone = Math.min(remainingStk, maxCapInFullZone);
   let seg = requiredDepthForStock(
     art.hoehe_mm, art.breite_mm, art.laenge_mm, art.gewicht_kg,
-    stockForThisZone, zoneWidth, config.gewicht_hard_kg,
+    stockForThisZone, zoneWidth, config.gewicht_hard_kg, wt.typ,
   );
   if (seg === null) {
     // Article needs full zone — try to claim all remaining depth for Strategy 2.
@@ -379,7 +388,7 @@ function addArticleToWT(
     if (existingArt) {
       const neededForExisting = requiredDepthForStock(
         ep.hoehe_mm, ep.breite_mm, ep.laenge_mm, ep.gewicht_kg,
-        ep.stueckzahl, zoneWidth, config.gewicht_hard_kg,
+        ep.stueckzahl, zoneWidth, config.gewicht_hard_kg, wt.typ,
       );
       if (neededForExisting !== null && neededForExisting < wtDepth) {
         const capCheck = zoneCapacity(existingArt, zoneWidth, neededForExisting, config.griff_puffer_mm);
@@ -410,10 +419,15 @@ function addArticleToWT(
         const stkInFree = Math.min(remainingStk, capInFree);
         const segInFree = requiredDepthForStock(
           art.hoehe_mm, art.breite_mm, art.laenge_mm, art.gewicht_kg,
-          stkInFree, zoneWidth, config.gewicht_hard_kg,
+          stkInFree, zoneWidth, config.gewicht_hard_kg, wt.typ,
         );
         if (segInFree !== null && usedDepth + segInFree <= wtDepth) {
           effectiveSeg = segInFree;
+          effectiveStk = stkInFree;
+        } else {
+          // No allowed segment fits — use the actual remainder depth directly
+          // (e.g. KLEIN: 150 mm remainder after 350 mm partition)
+          effectiveSeg = freeD;
           effectiveStk = stkInFree;
         }
       }
@@ -665,7 +679,7 @@ function step1PackTight(
     const cap = Math.max(1, zoneCapacity(art, zw, getWTDepth(typ), config.griff_puffer_mm));
     return requiredDepthForStock(
       art.hoehe_mm, art.breite_mm, art.laenge_mm, art.gewicht_kg,
-      Math.min(stk, cap), zw, config.gewicht_hard_kg,
+      Math.min(stk, cap), zw, config.gewicht_hard_kg, typ,
     ) ?? 800;
   };
 

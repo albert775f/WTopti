@@ -109,12 +109,12 @@ export default function WTVisualization() {
   const svgW = 250;
   const scale = svgW / 500;
 
-  // Compute SVG height from actual zone depths + dividers
+  // Compute SVG height from full WT depth (free space shows as empty at bottom)
   const totalDepthMm = wt
     ? (wt.zone_depths_mm ?? []).reduce((s, d) => s + d, 0) +
       Math.max(0, (wt.zone_depths_mm?.length ?? 0) - 1) * DIVIDER_MM
-    : (isKlein ? 500 : 800);
-  const svgH = Math.max(1, Math.ceil(totalDepthMm * scale));
+    : wtD_mm;
+  const svgH = Math.max(1, Math.ceil(wtD_mm * scale));
 
   const { stackRects, zoneBgs } = useMemo(() => {
     if (!wt) return { stackRects: [] as StackRect[], zoneBgs: [] as ZoneBg[] };
