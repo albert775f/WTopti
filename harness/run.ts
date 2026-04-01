@@ -51,7 +51,7 @@ const pad = (s: string, n: number) => s.padEnd(n).slice(0, n);
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 const ampelChar = (a: string) => a === 'green' ? '✓' : a === 'yellow' ? '~' : '✗';
 
-function main() {
+async function main() {
   console.log(hr('═'));
   console.log('  WTopti CLI Harness');
   console.log(`  Bestand: ${BESTAND_FILE}`);
@@ -293,6 +293,32 @@ function main() {
   const status  = hasFail || m7Miss ? 'FAILED' : m7.value < 0.90 ? 'WARNING' : 'PASSED';
   console.log(`  ${status === 'PASSED' ? '✓' : '✗'} RESULT: ${status}`);
   console.log(hr('═') + '\n');
+
+  // ── Persist run to server ──────────────────────────────────────────────────
+  try {
+    const SERVER = process.env.SERVER_URL || 'http://localhost:3001';
+    const res = await fetch(`${SERVER}/api/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config,
+        stats: {
+          artikel_gesamt: artikel.length,
+          artikel_platziert: placedArts.size,
+          wts_benoetigt: wts.length,
+          wts_klein: klein,
+          wts_gross: gross,
+          gesamtbestand: bestand.reduce((s, b) => s + b.bestand, 0),
+        },
+        metrics,
+        result: { wts, validation: p1.validation },
+      }),
+    });
+    const json = await res.json() as { id?: number };
+    console.log(`  Run saved → id=${json.id}\n`);
+  } catch (err) {
+    console.warn(`  Warning: could not save run to server (${err})\n`);
+  }
 
   process.exit(hasFail ? 1 : 0);
 }
