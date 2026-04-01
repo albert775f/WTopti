@@ -3,6 +3,7 @@ import cors from 'cors';
 import { initDb } from './db';
 import uploadRouter from './routes/upload';
 import dataRouter from './routes/data';
+import runsRouter from './routes/runs';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001');
@@ -11,6 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use('/api/upload', uploadRouter);
+app.use('/api/runs', runsRouter);
 app.use('/api', dataRouter);
 
 async function start(): Promise<void> {

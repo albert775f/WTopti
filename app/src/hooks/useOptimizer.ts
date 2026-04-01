@@ -32,6 +32,18 @@ export function useOptimizer() {
       } else if (msg.type === 'result') {
         dispatch({ type: 'SET_RESULT', payload: msg.result! });
         dispatch({ type: 'SET_OPTIMIZATION_STATUS', status: 'done' });
+        // Persist run to server (fire-and-forget)
+        const r = msg.result!;
+        fetch('http://localhost:3001/api/runs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            config: data.config,
+            stats: r.stats,
+            metrics: r.validation_dashboard?.metrics ?? null,
+            result: r,
+          }),
+        }).catch(err => console.warn('Failed to save run:', err));
       } else if (msg.type === 'error') {
         dispatch({ type: 'SET_OPTIMIZATION_STATUS', status: 'error' });
         console.error('Worker error:', msg.error);

@@ -40,6 +40,16 @@ export async function initDb(): Promise<void> {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS runs (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      bestand_uploaded_at TEXT,
+      config JSONB NOT NULL,
+      stats JSONB NOT NULL,
+      metrics JSONB,
+      result JSONB NOT NULL
+    );
+
     -- Migrations: add new columns to existing tables if not present
     ALTER TABLE artikel ADD COLUMN IF NOT EXISTS sperrgut TEXT;
     ALTER TABLE bestellungen ADD COLUMN IF NOT EXISTS bezeichnung TEXT;
