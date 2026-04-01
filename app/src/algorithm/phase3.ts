@@ -25,7 +25,9 @@ interface WTTemplate {
   zoneDepths: number[]; // pre-computed row depths from groove subset
 }
 
-function enumerateTemplates(typ: WTTyp, grooveDepths: number[], wtDepth: number): WTTemplate[] {
+function enumerateTemplates(
+  typ: WTTyp, grooveDepths: number[], wtDepth: number, teilerBreite = 0,
+): WTTemplate[] {
   const out: WTTemplate[] = [];
   const n = grooveDepths.length;
   const sorted = [...grooveDepths].sort((a, b) => a - b);
@@ -33,7 +35,13 @@ function enumerateTemplates(typ: WTTyp, grooveDepths: number[], wtDepth: number)
     const chosen = sorted.filter((_, i) => (mask >> i) & 1);
     const boundaries = [0, ...chosen, wtDepth];
     const zones: number[] = [];
-    for (let i = 1; i < boundaries.length; i++) zones.push(boundaries[i] - boundaries[i - 1]);
+    for (let i = 1; i < boundaries.length; i++) {
+      const raw = boundaries[i] - boundaries[i - 1];
+      // Each divider (non-wall boundary) eats teilerBreite/2 from the adjacent zone
+      const leftLoss  = boundaries[i - 1] > 0       ? teilerBreite / 2 : 0;
+      const rightLoss = boundaries[i]     < wtDepth  ? teilerBreite / 2 : 0;
+      zones.push(raw - leftLoss - rightLoss);
+    }
     if (zones.some(z => z < MIN_ZONE_MM)) continue;
     for (const mode of ['A', 'B'] as const) {
       out.push({ typ, mode, zoneDepths: zones });
@@ -42,6 +50,7 @@ function enumerateTemplates(typ: WTTyp, grooveDepths: number[], wtDepth: number)
   return out;
 }
 
+// Module-level templates use teilerBreite=0 (raw zones) — used by requiredDepthForStock etc.
 const WT_TEMPLATES_KLEIN = enumerateTemplates('KLEIN', KLEIN_GROOVES_DEPTH, WT_DEPTH_KLEIN);
 const WT_TEMPLATES_GROSS = enumerateTemplates('GROSS', GROSS_GROOVES_DEPTH, WT_DEPTH_GROSS);
 const WIDTH_SPLIT_MM = 250;                   // Mode B longitudinal divider
@@ -367,8 +376,9 @@ function pickTemplate(
   anchor: ArtikelProcessed,
   partners: ArtikelProcessed[],
   config: WTConfig,
+  templates: { klein: WTTemplate[]; gross: WTTemplate[] },
 ): WTTemplate {
-  const candidates = (typ === 'KLEIN' ? WT_TEMPLATES_KLEIN : WT_TEMPLATES_GROSS)
+  const candidates = (typ === 'KLEIN' ? templates.klein : templates.gross)
     .filter(t => t.mode === mode);
   const zoneWidth = getZoneWidth(mode);
   const numCols = mode === 'B' ? 2 : 1;
@@ -394,8 +404,9 @@ function createWTWithTemplate(
   id: string, typ: WTTyp, mode: 'A' | 'B', clusterId: number,
   anchor: ArtikelProcessed, partners: ArtikelProcessed[],
   config: WTConfig,
+  templates: { klein: WTTemplate[]; gross: WTTemplate[] },
 ): WT {
-  const tmpl = pickTemplate(typ, mode, anchor, partners, config);
+  const tmpl = pickTemplate(typ, mode, anchor, partners, config, templates);
   const wt = createWT(id, typ, mode, clusterId);
   wt.zone_depths_mm = [...tmpl.zoneDepths];
   updateWTMetrics(wt, config);
@@ -521,6 +532,7 @@ function step0ClusterPack(
   config: WTConfig,
   nextId: (typ: WTTyp) => string,
   remainingStock: Map<string, number>,
+  templates: { klein: WTTemplate[]; gross: WTTemplate[] },
 ): WT[] {
   // Build bidirectional partner lookup
   const reverseIndex = new Map<string, Array<{ seed: string; affinity: number }>>();
@@ -579,7 +591,7 @@ function step0ClusterPack(
     const partnerArts = partners
       .map(p => artDataMap.get(p.nr))
       .filter((a): a is ArtikelProcessed => !!a);
-    const wt = createWTWithTemplate(nextId(typ), typ, 'B', 0, anchorArt, partnerArts, config);
+    const wt = createWTWithTemplate(nextId(typ), typ, 'B', 0, anchorArt, partnerArts, config, templates);
 
     const placedAnchor = addArticleToWT(wt, anchorNr, anchorArt, anchorStk, config);
     if (placedAnchor <= 0) continue;
@@ -630,6 +642,7 @@ function step1PackTight(
   partnerIndex?: Map<string, Array<{ partner: string; affinity: number }>>,
   preStock?: Map<string, number>,
   preWTs?: WT[],
+  templates?: { klein: WTTemplate[]; gross: WTTemplate[] },
 ): { allWTs: WT[]; remainingStock: Map<string, number> } {
   const remainingStock: Map<string, number> = preStock ?? new Map<string, number>();
   if (!preStock) {
@@ -771,7 +784,8 @@ function step1PackTight(
       const partnerArts = getDirectPartners(artNr)
         .map(p => artDataMap.get(p.nr))
         .filter((a): a is ArtikelProcessed => !!a);
-      const wt = createWTWithTemplate(nextId(typ), typ, mode, 0, art, partnerArts, config);
+      const tmplSet = templates ?? { klein: WT_TEMPLATES_KLEIN, gross: WT_TEMPLATES_GROSS };
+      const wt = createWTWithTemplate(nextId(typ), typ, mode, 0, art, partnerArts, config, tmplSet);
       const toPlace = addArticleToWT(wt, artNr, art, stk, config);
 
       if (toPlace > 0) {
@@ -780,7 +794,7 @@ function step1PackTight(
         allWTs.push(wt);
         coSeedPartners(artNr, wt);
       } else if (mode === 'B') {
-        const wtA = createWTWithTemplate(nextId(typ), typ, 'A', 0, art, partnerArts, config);
+        const wtA = createWTWithTemplate(nextId(typ), typ, 'A', 0, art, partnerArts, config, tmplSet);
         const toPlaceA = addArticleToWT(wtA, artNr, art, stk, config);
         if (toPlaceA > 0) {
           stk -= toPlaceA;
@@ -944,6 +958,13 @@ export function processPhase3(
 ): WT[] {
   const { plan: wtTypePlan } = planWTTypes(processed, config);
 
+  // Build templates with config-specific divider width so zone capacity is accurate
+  const teilerBreite = config.teiler_breite_mm ?? 5;
+  const configTemplates = {
+    klein: enumerateTemplates('KLEIN', KLEIN_GROOVES_DEPTH, WT_DEPTH_KLEIN, teilerBreite),
+    gross: enumerateTemplates('GROSS', GROSS_GROOVES_DEPTH, WT_DEPTH_GROSS, teilerBreite),
+  };
+
   const artDataMap = new Map<string, ArtikelProcessed>();
   for (const art of processed) artDataMap.set(String(art.artikelnummer), art);
 
@@ -961,13 +982,13 @@ export function processPhase3(
     if (art.bestand > 0) remainingStock.set(String(art.artikelnummer), art.bestand);
   }
   const pairedWTs = step0ClusterPack(
-    artDataMap, affinityResult.partnerIndex, wtTypePlan, config, nextId, remainingStock,
+    artDataMap, affinityResult.partnerIndex, wtTypePlan, config, nextId, remainingStock, configTemplates,
   );
 
   // Step 1: Pack tight — affinity-interleaved FFD with pre-paired WTs as starting set
   const { allWTs } = step1PackTight(
     processed, artDataMap, wtTypePlan, config, nextId, affinityResult.partnerIndex,
-    remainingStock, pairedWTs,
+    remainingStock, pairedWTs, configTemplates,
   );
 
   // Step 2: Fill gaps with affinity partners — run 3 passes so that each round's
@@ -1007,7 +1028,7 @@ export function processPhase3(
     const fbTyp = wtTypePlan.get(artNr) ?? 'KLEIN';
 
     while (deficit > 0) {
-      const fbWT = createWTWithTemplate(nextId(fbTyp), fbTyp, 'A', 0, art, [], config);
+      const fbWT = createWTWithTemplate(nextId(fbTyp), fbTyp, 'A', 0, art, [], config, configTemplates);
       const placed = addArticleToWT(fbWT, artNr, art, deficit, config);
       if (placed <= 0) break; // article can't fit even in a fresh WT — skip
       finalWTs.push(fbWT);

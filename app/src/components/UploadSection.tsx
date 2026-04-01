@@ -66,6 +66,18 @@ function DropZone({ label, file, onFile, disabled }: DropZoneProps) {
   );
 }
 
+function ReadOnlyRow({ label, value, note }: { label: string; value: string; note: string }) {
+  return (
+    <div className="flex items-start justify-between py-1.5 border-b border-gray-100 last:border-0">
+      <div className="flex-1 min-w-0">
+        <span className="text-xs font-medium text-gray-700">{label}</span>
+        <p className="text-xs text-gray-400 mt-0.5">{note}</p>
+      </div>
+      <span className="ml-4 text-xs font-mono text-gray-600 whitespace-nowrap">{value}</span>
+    </div>
+  );
+}
+
 function ConfigPanel() {
   const { config } = useAppState();
   const dispatch = useAppDispatch();
@@ -73,83 +85,76 @@ function ConfigPanel() {
   const update = (partial: Partial<WTConfig>) => dispatch({ type: 'SET_CONFIG', payload: partial });
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <h3 className="text-sm font-semibold text-gray-700 mb-3">Konfiguration</h3>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+    <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
+      <h3 className="text-sm font-semibold text-gray-700">Konfiguration</h3>
+
+      {/* Editable params */}
+      <div className="grid grid-cols-2 gap-3">
         <label className="block">
-          <span className="text-gray-600">Gewicht Hard (kg)</span>
-          <input type="number" value={config.gewicht_hard_kg}
-            onChange={(e) => update({ gewicht_hard_kg: +e.target.value })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
-        </label>
-        <label className="block">
-          <span className="text-gray-600">Gewicht Soft (kg)</span>
-          <input type="number" value={config.gewicht_soft_kg}
-            onChange={(e) => update({ gewicht_soft_kg: +e.target.value })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
-        </label>
-        <label className="block">
-          <span className="text-gray-600">Höhenlimit (mm)</span>
-          <input type="number" value={config.hoehe_limit_mm}
-            onChange={(e) => update({ hoehe_limit_mm: +e.target.value })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1" />
-        </label>
-        <label className="block">
-          <span className="text-sm text-gray-600">Lagerfläche (m²)</span>
-          <input type="number" step="0.01" value={config.warehouse_area_m2 ?? 1480.65}
-            onChange={(e) => update({ warehouse_area_m2: +e.target.value })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
-          <span className="text-xs text-gray-400">STOROJET Rack-Gesamtfläche</span>
-        </label>
-        <label className="block">
-          <span className="text-sm text-gray-600">Min. Fachgröße (mm)</span>
-          <input type="number" min={0} step={10} value={config.min_segment_mm ?? 90}
-            onChange={(e) => update({ min_segment_mm: Math.max(0, +e.target.value) })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
-          <span className="text-xs text-gray-400">Mindestbreite UND -tiefe jedes Fachs (Greifraumregel)</span>
-        </label>
-        <label className="block">
-          <span className="text-sm text-gray-600">Griffpuffer (mm)</span>
-          <input type="number" min={0} step={5} value={config.griff_puffer_mm ?? 0}
+          <span className="text-xs font-medium text-gray-700">Griffpuffer (mm)</span>
+          <input
+            type="number" min={0} step={5}
+            value={config.griff_puffer_mm ?? 0}
             onChange={(e) => update({ griff_puffer_mm: Math.max(0, +e.target.value) })}
-            className="mt-1 block w-full rounded border-gray-300 border px-2 py-1 text-sm" />
-          <span className="text-xs text-gray-400">Freiraum mind. auf einer Seite jedes Fachs zum Greifen</span>
+            className="mt-1 block w-full rounded border border-gray-300 px-2 py-1 text-sm"
+          />
+          <span className="text-xs text-gray-400">Freiraum zum Greifen auf mind. einer Seite</span>
         </label>
-        <div className="block">
-          <span className="text-gray-500 text-xs">Teilerbreite: <strong>5 mm</strong> (fest)</span>
-        </div>
-        {/* Affinity-Packing Parameters */}
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            Affinity-Schwellwert P(B|A)
-          </label>
+        <label className="block">
+          <span className="text-xs font-medium text-gray-700">Teilerbreite (mm)</span>
           <input
-            type="number" step="0.01" min="0.05" max="0.50"
-            value={config.affinity_threshold}
-            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_threshold: parseFloat(e.target.value) || 0.15 } })}
-            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+            type="number" min={0} step={1}
+            value={config.teiler_breite_mm ?? 5}
+            onChange={(e) => update({ teiler_breite_mm: Math.max(0, +e.target.value) })}
+            className="mt-1 block w-full rounded border border-gray-300 px-2 py-1 text-sm"
           />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            Min. Co-Occurrence Anzahl
-          </label>
-          <input
-            type="number" min="1" max="50"
-            value={config.affinity_min_count}
-            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_min_count: parseInt(e.target.value) || 5 } })}
-            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+          <span className="text-xs text-gray-400">Materialbreite des Zonenteilers — reduziert nutzbare Fachtiefe</span>
+        </label>
+      </div>
+
+      {/* Read-only params */}
+      <div>
+        <p className="text-xs text-gray-400 mb-1.5">Festwerte (nicht editierbar)</p>
+        <div className="bg-gray-50 rounded border border-gray-100 px-3 py-1">
+          <ReadOnlyRow
+            label="Höhenlimit"
+            value={`${config.hoehe_limit_mm} mm`}
+            note="Max. Stapelhöhe pro Fach (entspricht WT-Rastermaß)"
           />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            Min. Bestellungen Seed-Artikel
-          </label>
-          <input
-            type="number" min="1" max="100"
-            value={config.affinity_min_orders_a}
-            onChange={e => dispatch({ type: 'SET_CONFIG', payload: { affinity_min_orders_a: parseInt(e.target.value) || 10 } })}
-            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+          <ReadOnlyRow
+            label="Gewicht Hard"
+            value={`${config.gewicht_hard_kg} kg`}
+            note="Absolutes Gewichtslimit je WT — wird nie überschritten"
+          />
+          <ReadOnlyRow
+            label="Gewicht Soft"
+            value={`${config.gewicht_soft_kg} kg`}
+            note="Zielgewicht je WT — leichte Überschreitung erlaubt"
+          />
+          <ReadOnlyRow
+            label="Min. Fachgröße"
+            value={`${config.min_segment_mm ?? 90} mm`}
+            note="Mindestbreite und -tiefe eines Fachs (Greifraumregel)"
+          />
+          <ReadOnlyRow
+            label="Affinity-Schwellwert"
+            value={`P(B|A) ≥ ${config.affinity_threshold}`}
+            note="Minimale bedingte Kaufwahrscheinlichkeit für Affinitätspaarung"
+          />
+          <ReadOnlyRow
+            label="Min. Bestellungen Seed"
+            value={`${config.affinity_min_orders_a}`}
+            note="Seed-Artikel muss mind. so oft bestellt worden sein"
+          />
+          <ReadOnlyRow
+            label="Min. Co-Occurrence"
+            value={`${config.affinity_min_count}`}
+            note="Gemeinsame Bestellungen für gültige Affinitätsbeziehung"
+          />
+          <ReadOnlyRow
+            label="Lagerfläche"
+            value={`${config.warehouse_area_m2 ?? 1480.65} m²`}
+            note="Derzeit nicht verwendet (Phase 5 entfernt)"
           />
         </div>
       </div>
